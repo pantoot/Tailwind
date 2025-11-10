@@ -187,9 +187,10 @@ struct BikeEditView: View {
 
     private func getScheduleCount(for bikeName: String) -> Int {
         let lowercaseName = bikeName.lowercased()
-        if lowercaseName.contains("951") || lowercaseName.contains("intense") {
+        // Also check bike type if available
+        if lowercaseName.contains("951") || lowercaseName.contains("intense") || type == .gravel {
             return MaintenanceSchedule.intense951Gravel().count
-        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") {
+        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") || type == .mountain {
             return MaintenanceSchedule.pivotTrail429EnduroProX0().count
         } else {
             return MaintenanceSchedule.basic().count

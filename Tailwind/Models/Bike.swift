@@ -168,13 +168,14 @@ class BikeStable: ObservableObject {
     func loadMaintenanceSchedule(for bikeId: UUID, bikeName: String) {
         guard let index = bikes.firstIndex(where: { $0.id == bikeId }) else { return }
 
-        // Determine schedule based on bike name
+        // Determine schedule based on bike name and type
         let schedule: [MaintenanceItem]
         let lowercaseName = bikeName.lowercased()
+        let bikeType = bikes[index].type
 
-        if lowercaseName.contains("951") || lowercaseName.contains("intense") {
+        if lowercaseName.contains("951") || lowercaseName.contains("intense") || bikeType == .gravel {
             schedule = MaintenanceSchedule.intense951Gravel()
-        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") {
+        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") || bikeType == .mountain {
             schedule = MaintenanceSchedule.pivotTrail429EnduroProX0()
         } else {
             schedule = MaintenanceSchedule.basic()
