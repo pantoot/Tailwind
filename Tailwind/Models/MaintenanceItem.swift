@@ -69,28 +69,48 @@ struct MaintenanceSchedule {
 
     static func intense951Gravel() -> [MaintenanceItem] {
         [
-            // Drivetrain (Shimano GRX)
-            MaintenanceItem(name: "Chain Lubrication", intervalMiles: 100, notes: "Clean and lube chain for smooth shifting"),
-            MaintenanceItem(name: "Chain Replacement", intervalMiles: 2000, notes: "Replace before 0.5% stretch to protect cassette"),
-            MaintenanceItem(name: "Cassette Inspection", intervalMiles: 1500, notes: "Check for wear, shark-fin teeth, or skipping"),
-            MaintenanceItem(name: "Chainring Inspection", intervalMiles: 3000, notes: "Check for wear and replace if needed"),
-            MaintenanceItem(name: "Derailleur Adjustment", intervalMiles: 500, notes: "Check indexing, limit screws, B-tension"),
+            // Drivetrain (Shimano GRX 2x)
+            MaintenanceItem(name: "Chain Lubrication", intervalMiles: 100, notes: "Clean and lube chain - gravel conditions require frequent cleaning"),
+            MaintenanceItem(name: "Chain Replacement", intervalMiles: 2000, notes: "Use chain checker - replace at 0.5% stretch to protect cassette"),
+            MaintenanceItem(name: "Cassette Inspection", intervalMiles: 1500, notes: "11-34T GRX cassette - check for shark-fin teeth, skipping under load"),
+            MaintenanceItem(name: "Chainring Inspection (Both)", intervalMiles: 3000, notes: "2x chainrings (48/32 or similar) - check both for wear"),
+            MaintenanceItem(name: "Front Derailleur Adjustment", intervalMiles: 500, notes: "Check trim positions, cable tension, limit screws"),
+            MaintenanceItem(name: "Rear Derailleur Adjustment", intervalMiles: 500, notes: "GRX shadow design - check B-tension, indexing, hanger alignment"),
+            MaintenanceItem(name: "Derailleur Hanger Check", intervalMiles: 1000, notes: "Carbon frame - ensure hanger isn't bent from crashes/transport"),
 
-            // Brakes (Shimano Hydraulic)
-            MaintenanceItem(name: "Brake Pad Inspection", intervalMiles: 500, notes: "Replace if <1mm thickness remaining"),
-            MaintenanceItem(name: "Brake Fluid Replacement", intervalMiles: 2000, notes: "Bleed Shimano hydraulic brakes (or yearly)"),
-            MaintenanceItem(name: "Rotor Inspection", intervalMiles: 1000, notes: "Check for warping, wear, contamination"),
+            // Brakes (Shimano GRX Hydraulic Disc)
+            MaintenanceItem(name: "Brake Pad Inspection", intervalMiles: 500, notes: "Check both wheels - replace pads if <1mm material remaining"),
+            MaintenanceItem(name: "Brake Fluid Bleed", intervalMiles: 2000, notes: "Shimano mineral oil - bleed yearly or when lever feels spongy"),
+            MaintenanceItem(name: "Rotor Inspection", intervalMiles: 1000, notes: "160mm rotors - check for warping, minimum 1.5mm thickness"),
+            MaintenanceItem(name: "Brake Caliper Alignment", intervalMiles: 500, notes: "Check for rub, recenter if needed after wheel removal"),
 
-            // Wheels
-            MaintenanceItem(name: "Tire Pressure Check", intervalMiles: 50, notes: "Check and adjust tire pressure"),
-            MaintenanceItem(name: "Wheel Truing", intervalMiles: 1000, notes: "Check spoke tension and true if needed"),
-            MaintenanceItem(name: "Hub Bearing Service", intervalMiles: 2000, notes: "Clean, grease, and adjust hub bearings"),
+            // Wheels & Tires
+            MaintenanceItem(name: "Tire Pressure Check", intervalMiles: 50, notes: "700x40c gravel tires - 40-60psi depending on terrain"),
+            MaintenanceItem(name: "Tire Tread Inspection", intervalMiles: 500, notes: "Check for cuts, sidewall damage, tread wear"),
+            MaintenanceItem(name: "Tire Rotation", intervalMiles: 1000, notes: "Swap front/rear to even wear (if identical tires)"),
+            MaintenanceItem(name: "Wheel Truing", intervalMiles: 1000, notes: "Check spoke tension, true wheels if wobbling"),
+            MaintenanceItem(name: "Spoke Tension Check", intervalMiles: 1500, notes: "Gravel riding loosens spokes - check and adjust"),
+            MaintenanceItem(name: "Hub Bearing Service", intervalMiles: 2000, notes: "Clean, regrease, adjust preload - critical for smooth rolling"),
+            MaintenanceItem(name: "Thru-Axle Inspection", intervalMiles: 500, notes: "Check threads, apply light grease to prevent seizing"),
 
-            // Frame & Cockpit
-            MaintenanceItem(name: "Headset Adjustment", intervalMiles: 1000, notes: "Check for play, adjust preload if needed"),
-            MaintenanceItem(name: "Bottom Bracket Service", intervalMiles: 2500, notes: "Check for play, noise, or rough spinning"),
-            MaintenanceItem(name: "Frame Inspection", intervalMiles: 500, notes: "Check for cracks, damage on carbon frame"),
-            MaintenanceItem(name: "Torque Check", intervalMiles: 300, notes: "Check all critical bolts (stem, seatpost, etc.)")
+            // Frame & Cockpit (Carbon Frame)
+            MaintenanceItem(name: "Frame Cleaning & Inspection", intervalMiles: 200, notes: "Clean mud/grit, inspect carbon for cracks especially BB, dropouts"),
+            MaintenanceItem(name: "Headset Adjustment", intervalMiles: 1000, notes: "Check for play or binding, adjust preload"),
+            MaintenanceItem(name: "Headset Bearing Inspection", intervalMiles: 2000, notes: "Integrated carbon headset - check bearings for roughness"),
+            MaintenanceItem(name: "Bottom Bracket Service", intervalMiles: 2500, notes: "Press-fit or threaded BB - check for play, creaking, rough spinning"),
+            MaintenanceItem(name: "Seatpost Inspection", intervalMiles: 1000, notes: "Carbon seatpost - check for slipping, proper torque (4-6 Nm)"),
+            MaintenanceItem(name: "Handlebar & Stem Torque", intervalMiles: 500, notes: "Carbon bar/stem - verify proper torque (5-6 Nm typically)"),
+            MaintenanceItem(name: "Cable Housing Inspection", intervalMiles: 1500, notes: "Check for fraying, kinks, replace if shifting/braking feels sticky"),
+
+            // Finishing Kit
+            MaintenanceItem(name: "Bar Tape Replacement", intervalMiles: 1500, notes: "Replace when worn, torn, or uncomfortable"),
+            MaintenanceItem(name: "Saddle Inspection", intervalMiles: 1000, notes: "Check rails, cover for wear or damage"),
+            MaintenanceItem(name: "Pedal Bearing Service", intervalMiles: 2000, notes: "If clipless pedals - service bearings, check cleat wear"),
+
+            // General Maintenance
+            MaintenanceItem(name: "Full Bike Wash", intervalMiles: 100, notes: "After gravel rides - remove grit that causes premature wear"),
+            MaintenanceItem(name: "Bolt Check (Critical)", intervalMiles: 300, notes: "Stem, seatpost clamp, crank bolts, chainring bolts, bottle cages"),
+            MaintenanceItem(name: "Professional Tune-Up", intervalMiles: 3000, notes: "Comprehensive service at bike shop")
         ]
     }
 

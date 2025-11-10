@@ -91,31 +91,16 @@ struct BikeEditView: View {
 
                 if let existingBike = bike {
                     Section(header: Text("Maintenance Schedule")) {
-                        // Only show load button if bike has no maintenance items
-                        if existingBike.maintenanceItems.isEmpty {
-                            Button(action: {
-                                bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
-                            }) {
-                                HStack {
-                                    Image(systemName: "wrench.and.screwdriver")
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("Load Bike-Specific Schedule")
-                                            .font(.body)
-                                        Text("Auto-detect maintenance items for this bike")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                            }
-                        } else {
+                        Button(action: {
+                            bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
+                        }) {
                             HStack {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.green)
+                                Image(systemName: existingBike.maintenanceItems.isEmpty ? "wrench.and.screwdriver" : "arrow.clockwise")
+                                    .foregroundColor(existingBike.maintenanceItems.isEmpty ? .blue : .orange)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Schedule Loaded")
+                                    Text(existingBike.maintenanceItems.isEmpty ? "Load Bike-Specific Schedule" : "Reload Schedule")
                                         .font(.body)
-                                    Text("\(existingBike.maintenanceItems.count) maintenance items")
+                                    Text(existingBike.maintenanceItems.isEmpty ? "Auto-detect maintenance items for this bike" : "Replace with updated \(existingBike.maintenanceItems.count) → schedule")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
