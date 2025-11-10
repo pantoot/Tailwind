@@ -68,6 +68,8 @@ struct BikeEditView: View {
     @Environment(\.dismiss) var dismiss
     @State private var name: String
     @State private var type: Bike.BikeType
+    @State private var showingScheduleLoadedAlert = false
+    @State private var loadedItemCount = 0
 
     let bike: Bike?
 
@@ -92,7 +94,10 @@ struct BikeEditView: View {
                 if let existingBike = bike {
                     Section(header: Text("Maintenance Schedule")) {
                         Button(action: {
+                            let count = getScheduleCount(for: existingBike.name)
                             bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
+                            loadedItemCount = count
+                            showingScheduleLoadedAlert = true
                         }) {
                             HStack {
                                 Image(systemName: existingBike.maintenanceItems.isEmpty ? "wrench.and.screwdriver" : "arrow.clockwise")
@@ -151,6 +156,11 @@ struct BikeEditView: View {
                     }
                     .disabled(name.isEmpty)
                 }
+            }
+            .alert("Schedule Loaded", isPresented: $showingScheduleLoadedAlert) {
+                Button("OK") { }
+            } message: {
+                Text("Successfully loaded \(loadedItemCount) maintenance items for \(bike?.name ?? "this bike").\n\nView them in Settings → Maintenance.")
             }
         }
     }
