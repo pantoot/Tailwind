@@ -100,9 +100,17 @@ struct BikeEditView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(existingBike.maintenanceItems.isEmpty ? "Load Bike-Specific Schedule" : "Reload Schedule")
                                         .font(.body)
-                                    Text(existingBike.maintenanceItems.isEmpty ? "Auto-detect maintenance items for this bike" : "Replace with updated \(existingBike.maintenanceItems.count) → schedule")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    if existingBike.maintenanceItems.isEmpty {
+                                        Text("Auto-detect maintenance items for this bike")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    } else {
+                                        let currentCount = existingBike.maintenanceItems.count
+                                        let newCount = getScheduleCount(for: existingBike.name)
+                                        Text("Update: \(currentCount) items → \(newCount) items")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
                                 }
                                 Spacer()
                             }
@@ -165,6 +173,17 @@ struct BikeEditView: View {
             bikeStable.addBike(newBike)
         }
         dismiss()
+    }
+
+    private func getScheduleCount(for bikeName: String) -> Int {
+        let lowercaseName = bikeName.lowercased()
+        if lowercaseName.contains("951") || lowercaseName.contains("intense") {
+            return MaintenanceSchedule.intense951Gravel().count
+        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") {
+            return MaintenanceSchedule.pivotTrail429EnduroProX0().count
+        } else {
+            return MaintenanceSchedule.basic().count
+        }
     }
 }
 
