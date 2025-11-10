@@ -91,26 +91,34 @@ struct BikeEditView: View {
 
                 if let existingBike = bike {
                     Section(header: Text("Maintenance Schedule")) {
-                        Button(action: {
-                            bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
-                        }) {
+                        // Only show load button if bike has no maintenance items
+                        if existingBike.maintenanceItems.isEmpty {
+                            Button(action: {
+                                bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
+                            }) {
+                                HStack {
+                                    Image(systemName: "wrench.and.screwdriver")
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Load Bike-Specific Schedule")
+                                            .font(.body)
+                                        Text("Auto-detect maintenance items for this bike")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                }
+                            }
+                        } else {
                             HStack {
-                                Image(systemName: "wrench.and.screwdriver")
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text("Load Bike-Specific Schedule")
+                                    Text("Schedule Loaded")
                                         .font(.body)
-                                    Text("Replaces current maintenance items")
+                                    Text("\(existingBike.maintenanceItems.count) maintenance items")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
-                                Spacer()
-                            }
-                        }
-
-                        NavigationLink(destination: MaintenanceView(bike: existingBike).environmentObject(bikeStable)) {
-                            HStack {
-                                Image(systemName: "list.bullet.clipboard")
-                                Text("View Maintenance Items")
                                 Spacer()
                             }
                         }
