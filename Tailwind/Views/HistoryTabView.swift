@@ -42,25 +42,25 @@ struct HistoryTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                StatCard(
+                SummaryStatCard(
                     title: "Total Rides",
                     value: "\(rideHistory.totalRides)",
                     icon: "bicycle",
                     color: .blue
                 )
-                StatCard(
+                SummaryStatCard(
                     title: "Total Distance",
                     value: String(format: "%.1f mi", rideHistory.totalDistance),
                     icon: "map",
                     color: .green
                 )
-                StatCard(
+                SummaryStatCard(
                     title: "Total Time",
                     value: formatDuration(rideHistory.totalDuration),
                     icon: "clock",
                     color: .purple
                 )
-                StatCard(
+                SummaryStatCard(
                     title: "Total Calories",
                     value: String(format: "%.0f", rideHistory.totalCalories),
                     icon: "flame",
@@ -351,7 +351,7 @@ struct HistoryTabView: View {
 
 // MARK: - Supporting Views
 
-struct StatCard: View {
+struct SummaryStatCard: View {
     let title: String
     let value: String
     let icon: String

@@ -216,7 +216,6 @@ struct RideHistoryView: View {
 
     // Group rides by month (YYYY-MM format)
     private var groupedRides: [String: [Ride]] {
-        let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM"
 
