@@ -89,6 +89,34 @@ struct BikeEditView: View {
                     }
                 }
 
+                if let existingBike = bike {
+                    Section(header: Text("Maintenance Schedule")) {
+                        Button(action: {
+                            bikeStable.loadMaintenanceSchedule(for: existingBike.id, bikeName: existingBike.name)
+                        }) {
+                            HStack {
+                                Image(systemName: "wrench.and.screwdriver")
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Load Bike-Specific Schedule")
+                                        .font(.body)
+                                    Text("Replaces current maintenance items")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+                        }
+
+                        NavigationLink(destination: MaintenanceView(bike: existingBike).environmentObject(bikeStable)) {
+                            HStack {
+                                Image(systemName: "list.bullet.clipboard")
+                                Text("View Maintenance Items")
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+
                 if bike != nil {
                     Section {
                         Button(action: {
@@ -128,8 +156,15 @@ struct BikeEditView: View {
 
     private func saveBike() {
         if let existingBike = bike {
-            // Update existing
-            let updated = Bike(id: existingBike.id, name: name, type: type)
+            // Update existing - preserve maintenance items and total miles
+            let updated = Bike(
+                id: existingBike.id,
+                name: name,
+                type: type,
+                totalMiles: existingBike.totalMiles,
+                maintenanceItems: existingBike.maintenanceItems,
+                assignedSensors: existingBike.assignedSensors
+            )
             bikeStable.updateBike(updated)
         } else {
             // Add new

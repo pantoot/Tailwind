@@ -164,6 +164,28 @@ class BikeStable: ObservableObject {
         }
     }
 
+    // Load bike-specific maintenance schedule
+    func loadMaintenanceSchedule(for bikeId: UUID, bikeName: String) {
+        guard let index = bikes.firstIndex(where: { $0.id == bikeId }) else { return }
+
+        // Determine schedule based on bike name
+        let schedule: [MaintenanceItem]
+        let lowercaseName = bikeName.lowercased()
+
+        if lowercaseName.contains("951") || lowercaseName.contains("intense") {
+            schedule = MaintenanceSchedule.intense951Gravel()
+        } else if lowercaseName.contains("pivot") || lowercaseName.contains("trail") || lowercaseName.contains("429") {
+            schedule = MaintenanceSchedule.pivotTrail429EnduroProX0()
+        } else {
+            schedule = MaintenanceSchedule.basic()
+        }
+
+        bikes[index].maintenanceItems = schedule
+        saveBikes()
+
+        print("✅ Loaded \(schedule.count) maintenance items for \(bikeName)")
+    }
+
     private func loadBikes() {
         guard let data = UserDefaults.standard.data(forKey: bikesKey) else {
             print("ℹ️ No saved bikes data found")
