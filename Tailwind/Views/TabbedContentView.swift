@@ -40,5 +40,6 @@ struct TabbedContentView: View {
                 .tag(2)
         }
         .accentColor(.cyan)
+        .toolbar(sensorDataService.isRecording ? .hidden : .visible, for: .tabBar)
     }
 }

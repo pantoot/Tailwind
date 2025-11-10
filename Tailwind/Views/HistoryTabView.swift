@@ -84,6 +84,35 @@ struct HistoryTabView: View {
 
             // Current metrics
             let currentMetrics = trainingLoadManager.calculateCurrentMetrics()
+
+            // Form status interpretation
+            VStack(spacing: 12) {
+                HStack {
+                    Image(systemName: "figure.strengthtraining.traditional")
+                        .font(.title)
+                        .foregroundColor(currentMetrics.formStatus.color)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(currentMetrics.formStatus.rawValue)
+                            .font(.headline)
+                            .foregroundColor(currentMetrics.formStatus.color)
+                        Text(currentMetrics.formStatus.description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+                }
+
+                Text("💡 \(currentMetrics.formStatus.recommendation)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding()
+            .background(currentMetrics.formStatus.color.opacity(0.1))
+            .cornerRadius(12)
+
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Fitness (CTL)")
@@ -92,6 +121,9 @@ struct HistoryTabView: View {
                     Text(String(format: "%.1f", currentMetrics.ctl))
                         .font(.title2)
                         .fontWeight(.bold)
+                        .foregroundColor(.blue)
+                    Text(currentMetrics.fitnessLevel)
+                        .font(.caption2)
                         .foregroundColor(.blue)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,6 +136,9 @@ struct HistoryTabView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.orange)
+                    Text("7-day avg")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -115,6 +150,9 @@ struct HistoryTabView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(tsbColor(for: currentMetrics.tsb))
+                    Text("readiness")
+                        .font(.caption2)
+                        .foregroundColor(tsbColor(for: currentMetrics.tsb))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -125,7 +163,6 @@ struct HistoryTabView: View {
             // Training Load Chart
             if !trainingLoadManager.dailyLoads.isEmpty {
                 trainingLoadChart
-                    .frame(height: 200)
             }
         }
         .padding()
@@ -137,28 +174,66 @@ struct HistoryTabView: View {
     private var trainingLoadChart: some View {
         let historicalData = trainingLoadManager.getHistoricalMetrics(days: 30)
 
-        return Chart {
-            ForEach(historicalData.indices, id: \.self) { index in
-                let data = historicalData[index]
+        return VStack(spacing: 12) {
+            // Chart
+            Chart {
+                ForEach(historicalData.indices, id: \.self) { index in
+                    let data = historicalData[index]
 
-                LineMark(
-                    x: .value("Date", data.date),
-                    y: .value("CTL", data.ctl)
-                )
-                .foregroundStyle(.blue)
-                .interpolationMethod(.catmullRom)
+                    LineMark(
+                        x: .value("Date", data.date),
+                        y: .value("CTL", data.ctl)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.catmullRom)
+                    .symbol(.circle)
 
-                LineMark(
-                    x: .value("Date", data.date),
-                    y: .value("ATL", data.atl)
-                )
-                .foregroundStyle(.orange)
-                .interpolationMethod(.catmullRom)
+                    LineMark(
+                        x: .value("Date", data.date),
+                        y: .value("ATL", data.atl)
+                    )
+                    .foregroundStyle(.orange)
+                    .interpolationMethod(.catmullRom)
+                    .symbol(.square)
+                }
             }
-        }
-        .chartYAxisLabel("Load")
-        .chartXAxis {
-            AxisMarks(values: .stride(by: .day, count: 7))
+            .chartYAxisLabel("Training Stress")
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .day, count: 7)) { value in
+                    AxisValueLabel(format: .dateTime.month().day())
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading)
+            }
+            .frame(height: 180)
+
+            // Legend
+            HStack(spacing: 24) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(.blue)
+                        .frame(width: 10, height: 10)
+                    Text("Fitness (CTL)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.orange)
+                        .frame(width: 10, height: 10)
+                    Text("Fatigue (ATL)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Text("Last 30 days")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 
