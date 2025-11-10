@@ -83,12 +83,13 @@ struct HistoryTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             // Current metrics
+            let currentMetrics = trainingLoadManager.calculateCurrentMetrics()
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Fitness (CTL)")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(String(format: "%.1f", trainingLoadManager.currentCTL))
+                    Text(String(format: "%.1f", currentMetrics.ctl))
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.blue)
@@ -99,7 +100,7 @@ struct HistoryTabView: View {
                     Text("Fatigue (ATL)")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(String(format: "%.1f", trainingLoadManager.currentATL))
+                    Text(String(format: "%.1f", currentMetrics.atl))
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.orange)
@@ -110,10 +111,10 @@ struct HistoryTabView: View {
                     Text("Form (TSB)")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(String(format: "%.1f", trainingLoadManager.currentTSB))
+                    Text(String(format: "%.1f", currentMetrics.tsb))
                         .font(.title2)
                         .fontWeight(.bold)
-                        .foregroundColor(tsbColor)
+                        .foregroundColor(tsbColor(for: currentMetrics.tsb))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -122,7 +123,7 @@ struct HistoryTabView: View {
             .cornerRadius(12)
 
             // Training Load Chart
-            if !trainingLoadManager.trainingLoadHistory.isEmpty {
+            if !trainingLoadManager.dailyLoads.isEmpty {
                 trainingLoadChart
                     .frame(height: 200)
             }
@@ -134,18 +135,22 @@ struct HistoryTabView: View {
     }
 
     private var trainingLoadChart: some View {
-        Chart {
-            ForEach(trainingLoadManager.trainingLoadHistory.suffix(30)) { load in
+        let historicalData = trainingLoadManager.getHistoricalMetrics(days: 30)
+
+        return Chart {
+            ForEach(historicalData.indices, id: \.self) { index in
+                let data = historicalData[index]
+
                 LineMark(
-                    x: .value("Date", load.date),
-                    y: .value("CTL", load.ctl)
+                    x: .value("Date", data.date),
+                    y: .value("CTL", data.ctl)
                 )
                 .foregroundStyle(.blue)
                 .interpolationMethod(.catmullRom)
 
                 LineMark(
-                    x: .value("Date", load.date),
-                    y: .value("ATL", load.atl)
+                    x: .value("Date", data.date),
+                    y: .value("ATL", data.atl)
                 )
                 .foregroundStyle(.orange)
                 .interpolationMethod(.catmullRom)
@@ -157,8 +162,7 @@ struct HistoryTabView: View {
         }
     }
 
-    private var tsbColor: Color {
-        let tsb = trainingLoadManager.currentTSB
+    private func tsbColor(for tsb: Double) -> Color {
         if tsb < -10 { return .red }
         if tsb < 0 { return .orange }
         if tsb < 10 { return .green }
