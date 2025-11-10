@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>bluetooth-central</string>
+		<string>audio</string>
+	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>DesertMetrics needs your location even when locked or in background to track your ride continuously, record your route, calculate distance, elevation gain, and provide accurate GPS-based metrics throughout your entire cycling session.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>DesertMetrics needs background location access to track your ride when the phone is locked or you're using other apps.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>DesertMetrics needs Bluetooth access to connect to your cycling sensors (speed, cadence, heart rate) even when the app is in the background or phone is locked, ensuring continuous tracking of your ride metrics.</string>
+</dict>
+</plist>
