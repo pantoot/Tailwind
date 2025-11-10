@@ -16,6 +16,7 @@ struct MainView: View {
     @EnvironmentObject var audioCueService: AudioCueService
     @EnvironmentObject var phoneConnectivity: PhoneConnectivityManager
     @State private var showSpeedHeatmap = false
+    @State private var showingBikeSelector = false
     @State private var landscapeViewIndex = 0 // 0 = simple metrics, 1 = detailed metrics
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -46,20 +47,30 @@ struct MainView: View {
             .toolbar(isLandscape ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    // Bike indicator (read-only, manage in Settings tab)
-                    HStack(spacing: 6) {
-                        Image(systemName: "bicycle")
-                            .font(.system(size: 14))
-                        Text(bikeStable.selectedBike?.name ?? "No Bike")
-                            .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(1)
+                    // Bike selector button
+                    Button(action: {
+                        showingBikeSelector = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bicycle")
+                                .font(.system(size: 14))
+                            Text(bikeStable.selectedBike?.name ?? "No Bike")
+                                .font(.system(size: 14, weight: .semibold))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.6))
+                        .clipShape(Capsule())
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.6))
-                    .clipShape(Capsule())
                 }
+            }
+            .sheet(isPresented: $showingBikeSelector) {
+                QuickBikeSelectorView()
+                    .environmentObject(bikeStable)
             }
             .onChange(of: gpsService.currentLocation) { oldValue, newValue in
                 if let location = newValue {
@@ -1365,6 +1376,56 @@ struct SensorSettingsView: View {
         case 26...100: return .green
         case 11...25: return .orange
         default: return .red
+        }
+    }
+}
+
+// MARK: - Quick Bike Selector
+
+struct QuickBikeSelectorView: View {
+    @EnvironmentObject var bikeStable: BikeStable
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationView {
+            List {
+                ForEach(bikeStable.bikes) { bike in
+                    Button(action: {
+                        bikeStable.selectBike(bike)
+                        dismiss()
+                    }) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(bike.name)
+                                    .font(.headline)
+                                    .foregroundColor(.primary)
+                                Text(bike.type.rawValue)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            if bikeStable.selectedBikeId == bike.id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                    .font(.title2)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .navigationTitle("Select Bike")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
