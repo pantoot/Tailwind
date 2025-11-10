@@ -15,12 +15,6 @@ struct MainView: View {
     @EnvironmentObject var segmentManager: SegmentManager
     @EnvironmentObject var audioCueService: AudioCueService
     @EnvironmentObject var phoneConnectivity: PhoneConnectivityManager
-    @State private var showingSensorSettings = false
-    @State private var showingUserProfile = false
-    @State private var showingRideHistory = false
-    @State private var showingBikeSelector = false
-    @State private var showingBikeManagement = false
-    @State private var showingMaintenance = false
     @State private var showSpeedHeatmap = false
     @State private var landscapeViewIndex = 0 // 0 = simple metrics, 1 = detailed metrics
     @State private var cameraPosition: MapCameraPosition = .region(
@@ -52,83 +46,19 @@ struct MainView: View {
             .toolbar(isLandscape ? .hidden : .visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            showingUserProfile = true
-                        }) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white)
-                                .padding(8)
-                                .background(Color.black.opacity(0.6))
-                                .clipShape(Circle())
-                        }
-
-                        // Bike selector button
-                        Button(action: {
-                            showingBikeSelector = true
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "bicycle")
-                                    .font(.system(size: 14))
-                                Text(bikeStable.selectedBike?.name ?? "Select Bike")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .lineLimit(1)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Capsule())
-                        }
+                    // Bike indicator (read-only, manage in Settings tab)
+                    HStack(spacing: 6) {
+                        Image(systemName: "bicycle")
+                            .font(.system(size: 14))
+                        Text(bikeStable.selectedBike?.name ?? "No Bike")
+                            .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
                     }
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showingSensorSettings = true
-                    }) {
-                        Image(systemName: "ellipsis.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.white)
-                            .padding(8)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Circle())
-                    }
-                }
-            }
-            .sheet(isPresented: $showingSensorSettings) {
-                SensorSettingsView()
-                    .environmentObject(bluetoothService)
-                    .environmentObject(trainingLoadManager)
-                    .environmentObject(routeMatchingService)
-                    .environmentObject(bikeStable)
-                    .environmentObject(segmentManager)
-                    .environmentObject(gpsService)
-                    .environmentObject(rideHistory)
-            }
-            .sheet(isPresented: $showingUserProfile) {
-                UserProfileView()
-                    .environmentObject(sensorDataService)
-            }
-            .sheet(isPresented: $showingRideHistory) {
-                RideHistoryView()
-                    .environmentObject(rideHistory)
-            }
-            .sheet(isPresented: $showingBikeSelector) {
-                BikeSelectorView()
-                    .environmentObject(bikeStable)
-            }
-            .sheet(isPresented: $showingBikeManagement) {
-                BikeManagementView()
-                    .environmentObject(bikeStable)
-            }
-            .sheet(isPresented: $showingMaintenance) {
-                if let bike = bikeStable.selectedBike {
-                    MaintenanceView(bike: bike)
-                        .environmentObject(bikeStable)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.6))
+                    .clipShape(Capsule())
                 }
             }
             .onChange(of: gpsService.currentLocation) { oldValue, newValue in
@@ -600,15 +530,6 @@ struct MainView: View {
                         .foregroundColor(.white)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                 }
-
-                Button(action: { showingRideHistory = true }) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 56, height: 56)
-                        .background(Color.blue.opacity(0.3))
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 32)
@@ -803,15 +724,6 @@ struct MainView: View {
                     .font(.system(size: 15, weight: .bold))
                     .frame(width: 40, height: 40)
                     .background(Color.gray.opacity(0.3))
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-
-            Button(action: { showingRideHistory = true }) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 40, height: 40)
-                    .background(Color.blue.opacity(0.3))
                     .foregroundColor(.white)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
             }

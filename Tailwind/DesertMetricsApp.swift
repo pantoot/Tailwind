@@ -8,7 +8,7 @@ struct TailwindApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainView()
+            TabbedContentView()
                 .environmentObject(services.bluetoothService)
                 .environmentObject(services.sensorDataService)
                 .environmentObject(services.gpsService)
