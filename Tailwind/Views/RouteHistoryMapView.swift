@@ -7,11 +7,21 @@ struct RouteHistoryMapView: View {
     @State private var mapCameraPosition: MapCameraPosition = .automatic
 
     enum TimeFrame: String, CaseIterable {
-        case week = "Last 7 Days"
-        case month = "Last 30 Days"
-        case threeMonths = "Last 3 Months"
-        case year = "Last Year"
-        case all = "All Time"
+        case week = "7 Days"
+        case month = "30 Days"
+        case threeMonths = "3 Months"
+        case year = "Year"
+        case all = "All"
+
+        var fullName: String {
+            switch self {
+            case .week: return "Last 7 Days"
+            case .month: return "Last 30 Days"
+            case .threeMonths: return "Last 3 Months"
+            case .year: return "Last Year"
+            case .all: return "All Time"
+            }
+        }
 
         func filterDate(from date: Date) -> Date {
             let calendar = Calendar.current
@@ -152,10 +162,35 @@ struct RouteHistoryMapView: View {
             Text("No rides with GPS data")
                 .font(.title3)
                 .foregroundColor(.gray)
-            Text("Complete rides with GPS tracking to see them here")
-                .font(.caption)
-                .foregroundColor(.gray)
-                .multilineTextAlignment(.center)
+
+            if selectedTimeframe != .all {
+                Text("Try selecting a different timeframe")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            } else {
+                Text("Complete rides with GPS tracking to see them here")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                    .multilineTextAlignment(.center)
+            }
+
+            // Debug info
+            let totalRides = rideHistory.rides.count
+            let ridesWithGPS = rideHistory.rides.filter {
+                $0.routeCoordinates != nil && !$0.routeCoordinates!.isEmpty
+            }.count
+
+            if totalRides > 0 {
+                VStack(spacing: 4) {
+                    Text("Total rides: \(totalRides)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("Rides with GPS: \(ridesWithGPS)")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
