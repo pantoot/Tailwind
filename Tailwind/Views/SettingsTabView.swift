@@ -1,5 +1,6 @@
 import SwiftUI
 import HealthKit
+import CoreBluetooth
 
 struct SettingsTabView: View {
     @EnvironmentObject var healthKitService: HealthKitService
