@@ -484,30 +484,15 @@ struct MainView: View {
             }
             .padding(.top, 8)
 
-            // Metrics
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    ModernMetricCard(icon: "heart.fill", title: "HR", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
-                    ModernMetricCard(icon: "flame.fill", title: "CAL", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "", color: .orange)
-                    ModernMetricCard(icon: "map.fill", title: "DIST", value: sensorDataService.sensorData.formattedDistance, unit: "", color: .blue)
-                    ModernMetricCard(icon: "clock.fill", title: "TIME", value: sensorDataService.sensorData.formattedDuration, unit: "", color: .purple)
-                }
-                HStack(spacing: 8) {
-                    ModernMetricCard(icon: "mountain.2.fill", title: "ELEV", value: String(format: "%.0f", gpsService.currentAltitude), unit: "ft", color: .teal)
-                    ModernMetricCard(icon: "arrow.up.forward", title: "CLIMB", value: String(format: "%.0f", gpsService.totalElevationGain), unit: "ft", color: .green)
-
-                    // Heart Rate Zone Display
-                    if let zone = sensorDataService.getCurrentZone(),
-                       let lthr = sensorDataService.userProfile.lactateThresholdHR {
-                        ZoneCard(zone: zone, currentHR: sensorDataService.sensorData.heartRate, lthr: lthr)
-                    } else {
-                        Color.clear.frame(maxWidth: .infinity)
-                    }
-
-                    Color.clear.frame(maxWidth: .infinity)
-                }
+            // Metrics (single row)
+            HStack(spacing: 8) {
+                ModernMetricCard(icon: "heart.fill", title: "HR", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
+                ModernMetricCard(icon: "flame.fill", title: "CAL", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "", color: .orange)
+                ModernMetricCard(icon: "map.fill", title: "DIST", value: sensorDataService.sensorData.formattedDistance, unit: "", color: .blue)
+                ModernMetricCard(icon: "clock.fill", title: "TIME", value: sensorDataService.sensorData.formattedDuration, unit: "", color: .purple)
             }
             .padding(.horizontal, 12)
+            .padding(.top, 8)
 
             Spacer()
 
@@ -543,7 +528,7 @@ struct MainView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 32)
+            .padding(.bottom, 100)
         }
     }
 
