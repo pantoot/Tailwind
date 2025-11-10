@@ -295,6 +295,28 @@ struct HistoryTabView: View {
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
             }
+
+            NavigationLink(destination: RouteHistoryMapView()) {
+                HStack {
+                    Image(systemName: "map.fill")
+                        .foregroundColor(.green)
+                        .frame(width: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Route History")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text("View all rides on a map")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.gray)
+                }
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+            }
         }
     }
 

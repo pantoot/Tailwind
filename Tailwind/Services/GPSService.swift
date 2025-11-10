@@ -40,8 +40,7 @@ class GPSService: NSObject, ObservableObject {
 
         locationPermission = locationManager.authorizationStatus
 
-        // Setup motion detection
-        setupMotionDetection()
+        // Don't start motion detection until tracking begins
     }
 
     private func setupMotionDetection() {
@@ -97,6 +96,9 @@ class GPSService: NSObject, ObservableObject {
         totalElevationGain = 0.0
         lastAltitude = nil
 
+        // Start motion detection only when tracking begins
+        setupMotionDetection()
+
         locationManager.startUpdatingLocation()
         print("GPS: Started tracking")
     }
@@ -104,6 +106,11 @@ class GPSService: NSObject, ObservableObject {
     func stopTracking() {
         isTracking = false
         locationManager.stopUpdatingLocation()
+
+        // Stop motion detection to save battery and memory
+        motionManager.stopAccelerometerUpdates()
+        isDeviceMoving = false
+
         print("GPS: Stopped tracking")
     }
 
