@@ -104,6 +104,20 @@ struct MainView: View {
                     sendWatchUpdate()
                 }
             }
+            .onChange(of: phoneConnectivity.watchRequestsStartRide) { _, _ in
+                // Watch requested start ride
+                if !sensorDataService.isRecording {
+                    print("🎬 Starting ride from watch command")
+                    handleStartStop()
+                }
+            }
+            .onChange(of: phoneConnectivity.watchRequestsStopRide) { _, _ in
+                // Watch requested stop ride
+                if sensorDataService.isRecording {
+                    print("🛑 Stopping ride from watch command")
+                    handleStartStop()
+                }
+            }
         }
     }
 

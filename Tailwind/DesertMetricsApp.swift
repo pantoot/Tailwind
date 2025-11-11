@@ -127,14 +127,18 @@ class AppServices: ObservableObject {
         // Watch Connectivity -> Control iPhone app
         phoneConnectivity.activateSession()
 
-        phoneConnectivity.onStartRide = {
+        phoneConnectivity.onStartRide = { [weak phoneConnectivity] in
             print("📱 iPhone: Watch requested start ride")
-            // Will be handled by MainView's handleStartStop when we wire it up
+            DispatchQueue.main.async {
+                phoneConnectivity?.watchRequestsStartRide.toggle() // Toggle to trigger change
+            }
         }
 
-        phoneConnectivity.onStopRide = {
+        phoneConnectivity.onStopRide = { [weak phoneConnectivity] in
             print("📱 iPhone: Watch requested stop ride")
-            // Will be handled by MainView's handleStartStop when we wire it up
+            DispatchQueue.main.async {
+                phoneConnectivity?.watchRequestsStopRide.toggle() // Toggle to trigger change
+            }
         }
 
         phoneConnectivity.onToggleAudio = { [weak audioCueService] in

@@ -8,6 +8,10 @@ class PhoneConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchConnected: Bool = false
     @Published var watchHeartRate: Int = 0 // Heart rate from Apple Watch
 
+    // Published actions for watch remote control (observed by MainView)
+    @Published var watchRequestsStartRide: Bool = false
+    @Published var watchRequestsStopRide: Bool = false
+
     // Callbacks to control iPhone app
     var onStartRide: (() -> Void)?
     var onStopRide: (() -> Void)?
