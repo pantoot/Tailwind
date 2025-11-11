@@ -12,11 +12,13 @@ class SensorDataService: ObservableObject {
     private var lastSpeedUpdate: Date?
     private var lastCalorieUpdate: Date?
     private var lastHeartRateUpdate: Date? // Track when we last got HR data
+    private var lastBluetoothHRUpdate: Date? // Track Bluetooth HR specifically
     private var pausedTime: TimeInterval = 0 // Total time spent paused
     private var pauseStartTime: Date? // When current pause started
 
     // Stale data timeout - if no HR update in 10 seconds, clear display
     private let hrStaleTimeout: TimeInterval = 10.0
+    private let bluetoothHRTimeout: TimeInterval = 5.0 // Prefer Bluetooth if received in last 5 seconds
 
     // Track max values during ride
     private var maxSpeed: Double = 0.0
@@ -142,6 +144,7 @@ class SensorDataService: ObservableObject {
         sensorData.cadence = cadence
     }
 
+    // Update HR from Bluetooth sensor (highest priority)
     func updateHeartRate(_ heartRate: Int) {
         // Validate HR is in reasonable range
         guard heartRate >= 30 && heartRate <= 220 else {
@@ -149,8 +152,34 @@ class SensorDataService: ObservableObject {
             return
         }
 
+        lastBluetoothHRUpdate = Date()
+        applyHeartRate(heartRate, source: "Bluetooth")
+    }
+
+    // Update HR from Apple Watch (fallback)
+    func updateWatchHeartRate(_ heartRate: Int) {
+        // Validate HR is in reasonable range
+        guard heartRate >= 30 && heartRate <= 220 else {
+            print("⚠️ Invalid watch HR value: \(heartRate) - ignoring")
+            return
+        }
+
+        // Check if we have recent Bluetooth HR data
+        if let lastBT = lastBluetoothHRUpdate,
+           Date().timeIntervalSince(lastBT) < bluetoothHRTimeout {
+            print("⌚ Ignoring watch HR - using Bluetooth HR (received \(Int(Date().timeIntervalSince(lastBT)))s ago)")
+            return
+        }
+
+        applyHeartRate(heartRate, source: "Watch")
+    }
+
+    // Common method to apply HR from any source
+    private func applyHeartRate(_ heartRate: Int, source: String) {
         sensorData.heartRate = heartRate
-        lastHeartRateUpdate = Date() // Track when we got this update
+        lastHeartRateUpdate = Date()
+
+        print("❤️ Using \(source) HR: \(heartRate) bpm")
 
         // Track max heart rate
         if heartRate > maxHeartRate {

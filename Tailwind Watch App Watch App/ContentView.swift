@@ -3,6 +3,7 @@ import WatchKit
 
 struct ContentView: View {
     @EnvironmentObject var connectivity: WatchConnectivityManager
+    @EnvironmentObject var healthKit: WatchHealthKitService
     @State private var isRecording = false
 
     var body: some View {
@@ -109,9 +110,27 @@ struct ContentView: View {
         }
         .onAppear {
             connectivity.activateSession()
+
+            // Request HealthKit authorization
+            Task {
+                try? await healthKit.requestAuthorization()
+            }
         }
         .onChange(of: connectivity.isRecording) { oldValue, newValue in
             isRecording = newValue
+
+            // Start/stop heart rate streaming based on recording state
+            if newValue {
+                healthKit.startHeartRateStreaming()
+            } else {
+                healthKit.stopHeartRateStreaming()
+            }
+        }
+        .onChange(of: healthKit.currentHeartRate) { oldValue, newValue in
+            // Send watch HR to iPhone whenever it updates
+            if newValue > 0 {
+                connectivity.sendHeartRate(newValue)
+            }
         }
     }
 

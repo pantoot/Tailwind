@@ -142,6 +142,23 @@ class AppServices: ObservableObject {
             audioCueService?.audioEnabled.toggle()
         }
 
+        // Set up watch heart rate streaming to sensor data
+        setupWatchHeartRate()
+
         // We'll send updates to watch from MainView when data changes
     }
+
+    // Set up watch heart rate forwarding
+    func setupWatchHeartRate() {
+        // Subscribe to watch HR updates
+        phoneConnectivity.$watchHeartRate
+            .sink { [weak sensorDataService] watchHR in
+                if watchHR > 0 {
+                    sensorDataService?.updateWatchHeartRate(watchHR)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private var cancellables = Set<AnyCancellable>()
 }

@@ -6,6 +6,7 @@ class PhoneConnectivityManager: NSObject, ObservableObject {
     private var session: WCSession?
     private var updateTimer: Timer?
     @Published var isWatchConnected: Bool = false
+    @Published var watchHeartRate: Int = 0 // Heart rate from Apple Watch
 
     // Callbacks to control iPhone app
     var onStartRide: (() -> Void)?
@@ -170,9 +171,10 @@ extension PhoneConnectivityManager: WCSessionDelegate {
         }
     }
 
-    // Receive commands from watch
+    // Receive commands and data from watch
     func session(_ session: WCSession, didReceiveMessage message: [String : Any]) {
         DispatchQueue.main.async {
+            // Handle actions (start/stop ride, etc.)
             if let action = message["action"] as? String {
                 print("📱 iPhone: Received action: \(action)")
 
@@ -186,6 +188,12 @@ extension PhoneConnectivityManager: WCSessionDelegate {
                 default:
                     break
                 }
+            }
+
+            // Handle watch heart rate data
+            if let watchHR = message["watchHeartRate"] as? Int {
+                self.watchHeartRate = watchHR
+                print("📱 iPhone: Received watch HR: \(watchHR) bpm")
             }
         }
     }

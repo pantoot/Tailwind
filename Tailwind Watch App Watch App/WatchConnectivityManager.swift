@@ -67,6 +67,24 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
         print("⌚ Watch: Sent toggle audio command")
     }
+
+    // Send heart rate from watch to iPhone
+    func sendHeartRate(_ heartRate: Int) {
+        guard let session = session, session.isReachable else {
+            return // Silently fail if iPhone not reachable
+        }
+
+        let message: [String: Any] = [
+            "watchHeartRate": heartRate
+        ]
+
+        session.sendMessage(message, replyHandler: nil) { error in
+            // Only log if not a reachability error
+            if (error as NSError).code != 7012 {
+                print("⌚ Watch: Error sending heart rate: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - WCSessionDelegate
