@@ -43,19 +43,19 @@ class WatchHealthKitService: NSObject, ObservableObject {
 
         let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
 
-        // Create predicate for most recent samples
+        // Create predicate for only very recent samples (last 10 seconds)
         let predicate = HKQuery.predicateForSamples(
-            withStart: Date().addingTimeInterval(-60), // Last minute
+            withStart: Date().addingTimeInterval(-10),
             end: nil,
             options: .strictStartDate
         )
 
-        // Create anchored object query for real-time updates
+        // Use anchored query with strict limit to prevent memory issues
         let query = HKAnchoredObjectQuery(
             type: heartRateType,
             predicate: predicate,
             anchor: heartRateAnchor,
-            limit: HKObjectQueryNoLimit
+            limit: 1  // Only get 1 most recent sample, not unlimited
         ) { [weak self] query, samples, deletedObjects, anchor, error in
             guard let self = self else { return }
 
@@ -98,6 +98,7 @@ class WatchHealthKitService: NSObject, ObservableObject {
         if let query = heartRateQuery {
             healthStore.stop(query)
             heartRateQuery = nil
+            heartRateAnchor = nil  // Reset anchor to prevent memory buildup
             print("⌚ Watch: Stopped heart rate streaming")
         }
 
