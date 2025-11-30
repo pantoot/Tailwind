@@ -8,25 +8,104 @@ struct TailwindApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabbedContentView()
-                .environmentObject(services.bluetoothService)
-                .environmentObject(services.sensorDataService)
-                .environmentObject(services.gpsService)
+            ImportView()
+                .environmentObject(services.fitImportService)
                 .environmentObject(services.rideHistory)
-                .environmentObject(services.bikeStable)
-                .environmentObject(services.trainingLoadManager)
                 .environmentObject(services.healthKitService)
-                .environmentObject(services.backgroundAudioService)
-                .environmentObject(services.routeMatchingService)
-                .environmentObject(services.segmentManager)
-                .environmentObject(services.audioCueService)
-                .environmentObject(services.phoneConnectivity)
+                .onOpenURL { url in
+                    handleIncomingURL(url)
+                }
+                .onAppear {
+                    processPendingImports()
+                }
+        }
+    }
+
+    /// Handle URLs from share extension or other apps
+    private func handleIncomingURL(_ url: URL) {
+        // Handle tailwind:// URL scheme
+        if url.scheme == "tailwind" && url.host == "import" {
+            if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               let fileParam = components.queryItems?.first(where: { $0.name == "file" })?.value,
+               let filePath = fileParam.removingPercentEncoding {
+                let fileURL = URL(fileURLWithPath: filePath)
+                Task {
+                    do {
+                        _ = try await services.fitImportService.importFITFile(from: fileURL)
+                        // Clean up the temp file after import
+                        try? FileManager.default.removeItem(at: fileURL)
+                    } catch {
+                        print("Failed to import from URL: \(error)")
+                    }
+                }
+            }
+        }
+        // Handle direct FIT file opens
+        else if url.pathExtension.lowercased() == "fit" {
+            Task {
+                do {
+                    _ = try await services.fitImportService.importFITFile(from: url)
+                } catch {
+                    print("Failed to import FIT file: \(error)")
+                }
+            }
+        }
+    }
+
+    /// Process any FIT files shared via the extension while app was closed
+    private func processPendingImports() {
+        guard let defaults = UserDefaults(suiteName: "group.com.tailwind.app") else { return }
+        guard let pendingPaths = defaults.stringArray(forKey: "pendingFITImports"), !pendingPaths.isEmpty else { return }
+
+        // Clear the pending list
+        defaults.removeObject(forKey: "pendingFITImports")
+
+        // Import each pending file
+        Task {
+            for path in pendingPaths {
+                let url = URL(fileURLWithPath: path)
+                guard FileManager.default.fileExists(atPath: path) else { continue }
+
+                do {
+                    _ = try await services.fitImportService.importFITFile(from: url)
+                    // Clean up after successful import
+                    try? FileManager.default.removeItem(at: url)
+                    print("Processed pending import: \(url.lastPathComponent)")
+                } catch {
+                    print("Failed pending import: \(error)")
+                }
+            }
         }
     }
 }
 
-// Container to manage service lifecycle and wiring
+/// Simplified service container for FIT import focused app
 class AppServices: ObservableObject {
+    let rideHistory: RideHistory
+    let healthKitService: HealthKitService
+    let fitImportService: FITImportService
+
+    init() {
+        // Initialize core services
+        self.rideHistory = RideHistory()
+        self.healthKitService = HealthKitService()
+
+        // FIT import service depends on HealthKit and RideHistory
+        self.fitImportService = FITImportService(
+            healthKitService: healthKitService,
+            rideHistory: rideHistory
+        )
+
+        print("🚀 Tailwind initialized - FIT Import Mode")
+    }
+}
+
+// MARK: - Legacy AppServices (preserved for reference)
+// The original ride-tracking services are preserved below for potential future use
+// or if we want to add a hybrid mode that supports both import and live tracking.
+
+/*
+class LegacyAppServices: ObservableObject {
     let bluetoothService: BluetoothService
     let sensorDataService: SensorDataService
     let gpsService: GPSService
@@ -58,7 +137,7 @@ class AppServices: ObservableObject {
         // Wire up callbacks after all services are created
         // Bluetooth -> Sensor Data
         self.bluetoothService.onSpeedUpdate = { [weak sensorDataService] speed in
-            sensorDataService?.updateSpeed(speed)
+            sensorDataService?.updateSpeed(speed, fromSensor: true)
         }
 
         self.bluetoothService.onCadenceUpdate = { [weak sensorDataService] cadence in
@@ -70,9 +149,15 @@ class AppServices: ObservableObject {
         }
 
         // GPS -> Sensor Data (backup speed)
-        self.gpsService.onSpeedUpdate = { [weak sensorDataService] gpsSpeed in
-            // Only use GPS speed if we don't have sensor speed
-            if let sensorData = sensorDataService, sensorData.sensorData.speed == 0 {
+        self.gpsService.onSpeedUpdate = { [weak sensorDataService, weak bluetoothService] gpsSpeed in
+            // Only use GPS speed if we don't have a connected speed sensor
+            guard let sensorData = sensorDataService,
+                  let bluetooth = bluetoothService else { return }
+
+            // Check if we have an active speed sensor (not just if speed is 0)
+            let hasSpeedSensor = bluetooth.isConnected(.speed)
+
+            if !hasSpeedSensor {
                 sensorData.updateSpeed(gpsSpeed)
             }
         }
@@ -87,25 +172,18 @@ class AppServices: ObservableObject {
             segmentManager?.updateActiveEffort(coordinate: location.coordinate)
         }
 
-        // Distance -> Audio Cues (check for 5-mile splits)
-        // We'll trigger this from MainView when distance updates
-
         // Bike Selection -> Auto-connect sensors
         self.bikeStable.onBikeChanged = { [weak bluetoothService, weak bikeStable] bike in
             guard let bluetoothService = bluetoothService,
                   let bikeStable = bikeStable else { return }
 
             print("🚴 Bike changed to: \(bike.name)")
-
-            // Disconnect previous bike's sensors (keep profile sensors)
             bluetoothService.disconnectBikeSensors()
 
-            // Connect profile sensors if not already connected
             for (_, sensor) in bikeStable.profileSensors {
                 bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
             }
 
-            // Connect this bike's sensors
             for (_, sensor) in bike.assignedSensors {
                 bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
             }
@@ -113,48 +191,40 @@ class AppServices: ObservableObject {
 
         // Auto-connect sensors for initially selected bike
         if let initialBike = bikeStable.selectedBike {
-            // Connect profile sensors
             for (_, sensor) in bikeStable.profileSensors {
                 bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
             }
 
-            // Connect bike sensors
             for (_, sensor) in initialBike.assignedSensors {
                 bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
             }
         }
 
-        // Watch Connectivity -> Control iPhone app
+        // Watch Connectivity
         phoneConnectivity.activateSession()
 
         phoneConnectivity.onStartRide = { [weak phoneConnectivity] in
             print("📱 iPhone: Watch requested start ride")
             DispatchQueue.main.async {
-                phoneConnectivity?.watchRequestsStartRide.toggle() // Toggle to trigger change
+                phoneConnectivity?.watchRequestsStartRide.toggle()
             }
         }
 
         phoneConnectivity.onStopRide = { [weak phoneConnectivity] in
             print("📱 iPhone: Watch requested stop ride")
             DispatchQueue.main.async {
-                phoneConnectivity?.watchRequestsStopRide.toggle() // Toggle to trigger change
+                phoneConnectivity?.watchRequestsStopRide.toggle()
             }
         }
 
         phoneConnectivity.onToggleAudio = { [weak audioCueService] in
-            print("📱 iPhone: Watch requested toggle audio")
             audioCueService?.audioEnabled.toggle()
         }
 
-        // Set up watch heart rate streaming to sensor data
         setupWatchHeartRate()
-
-        // We'll send updates to watch from MainView when data changes
     }
 
-    // Set up watch heart rate forwarding
     func setupWatchHeartRate() {
-        // Subscribe to watch HR updates
         phoneConnectivity.$watchHeartRate
             .sink { [weak sensorDataService] watchHR in
                 if watchHR > 0 {
@@ -166,3 +236,4 @@ class AppServices: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 }
+*/
