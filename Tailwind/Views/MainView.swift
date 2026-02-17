@@ -24,6 +24,7 @@ struct MainView: View {
             span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         )
     )
+    @State private var watchUpdateTimer: Timer?
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     @Environment(\.verticalSizeClass) var verticalSizeClass
 
@@ -31,11 +32,24 @@ struct MainView: View {
         verticalSizeClass == .compact
     }
 
+    var hasCadenceSensor: Bool {
+        bikeStable.getSensor(for: .cadence) != nil
+    }
+
     var body: some View {
         NavigationView {
             ZStack {
-                Color.black
-                    .ignoresSafeArea(edges: isLandscape ? .all : .bottom)
+                // Modern gradient background instead of flat black
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.05, green: 0.05, blue: 0.15),  // Dark navy
+                        Color(red: 0.02, green: 0.02, blue: 0.08),  // Darker
+                        Color.black
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea(edges: isLandscape ? .all : .bottom)
 
                 if isLandscape {
                     landscapeLayout
@@ -99,10 +113,17 @@ struct MainView: View {
                     gpsService.requestPermission()
                 }
 
-                // Start timer to send updates to Apple Watch
-                Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                    sendWatchUpdate()
+                // Start timer to send updates to Apple Watch (only if not already running)
+                if watchUpdateTimer == nil {
+                    watchUpdateTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                        sendWatchUpdate()
+                    }
                 }
+            }
+            .onDisappear {
+                // Clean up timer to prevent memory leak
+                watchUpdateTimer?.invalidate()
+                watchUpdateTimer = nil
             }
             .onChange(of: phoneConnectivity.watchRequestsStartRide) { _, _ in
                 // Watch requested start ride
@@ -141,24 +162,33 @@ struct MainView: View {
 
             // Right: Metrics (50% width)
             VStack(spacing: 0) {
-                Spacer()
+                Spacer(minLength: 8)
 
-                // Large Speed Display with dynamic color
+                // Large Speed Display with modern styling (simplified for landscape)
                 VStack(spacing: 4) {
                     Text(sensorDataService.sensorData.formattedSpeed)
-                        .font(.system(size: 120, weight: .bold, design: .rounded))
-                        .foregroundStyle(speedColor)
+                        .font(.system(size: 100, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [speedColor, speedColor.opacity(0.7)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .shadow(color: speedColor.opacity(0.4), radius: 15, x: 0, y: 6)
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
-                    Text("MPH")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.gray)
-                        .tracking(2)
-                }
-                .padding(.bottom, 20)
 
-                // Four Key Metrics
-                VStack(spacing: 12) {
+                    Text("MPH")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .tracking(3)
+                }
+                .padding(.top, 16)
+                .padding(.bottom, 12)
+
+                // Key Metrics (with cadence if available)
+                VStack(spacing: 8) {
                     // Row 1: Time and Distance
                     HStack(spacing: 12) {
                         SimpleLandscapeMetric(
@@ -173,18 +203,26 @@ struct MainView: View {
                         )
                     }
 
-                    // Row 2: Calories and Heart Rate
+                    // Row 2: HR and Calories (or Cadence if available)
                     HStack(spacing: 12) {
-                        SimpleLandscapeMetric(
-                            value: String(format: "%.0f", sensorDataService.sensorData.calories),
-                            label: "CALORIES",
-                            color: .orange
-                        )
                         SimpleLandscapeMetric(
                             value: "\(sensorDataService.sensorData.heartRate)",
                             label: "BPM",
                             color: .red
                         )
+                        if hasCadenceSensor {
+                            SimpleLandscapeMetric(
+                                value: "\(sensorDataService.sensorData.cadence)",
+                                label: "CADENCE",
+                                color: .green
+                            )
+                        } else {
+                            SimpleLandscapeMetric(
+                                value: String(format: "%.0f", sensorDataService.sensorData.calories),
+                                label: "CALORIES",
+                                color: .orange
+                            )
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -197,6 +235,7 @@ struct MainView: View {
                     .padding(.bottom, 12)
             }
             .frame(maxWidth: .infinity)
+            .background(Color.black) // Ensure black background for metrics pane
         }
         .gesture(
             DragGesture(minimumDistance: 50)
@@ -223,24 +262,34 @@ struct MainView: View {
             VStack(spacing: 8) {
                 Spacer()
 
-                // Speed
-                VStack(spacing: 0) {
+                // Speed - Modern (simplified for landscape)
+                VStack(spacing: 2) {
                     Text(sensorDataService.sensorData.formattedSpeed)
-                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                        .font(.system(size: 60, weight: .bold, design: .rounded))
                         .foregroundStyle(
-                            LinearGradient(colors: [.green, .cyan], startPoint: .leading, endPoint: .trailing)
+                            LinearGradient(
+                                colors: [speedColor, speedColor.opacity(0.7)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
+                        .shadow(color: speedColor.opacity(0.4), radius: 12, x: 0, y: 4)
+
                     Text("MPH")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.gray)
-                        .tracking(1)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white.opacity(0.5))
+                        .tracking(2)
                 }
 
-                // Metrics
+                // Metrics (with cadence if available)
                 VStack(spacing: 5) {
                     HStack(spacing: 5) {
                         LandscapeMetricCard(icon: "heart.fill", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
-                        LandscapeMetricCard(icon: "flame.fill", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "cal", color: .orange)
+                        if hasCadenceSensor {
+                            LandscapeMetricCard(icon: "gauge", value: "\(sensorDataService.sensorData.cadence)", unit: "rpm", color: .green)
+                        } else {
+                            LandscapeMetricCard(icon: "flame.fill", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "cal", color: .orange)
+                        }
                     }
                     HStack(spacing: 5) {
                         LandscapeMetricCard(icon: "map.fill", value: sensorDataService.sensorData.formattedDistance, unit: "mi", color: .blue)
@@ -261,6 +310,7 @@ struct MainView: View {
                     .padding(.bottom, 8)
             }
             .frame(maxWidth: .infinity)
+            .background(Color.black) // Ensure black background for metrics pane
         }
         .gesture(
             DragGesture(minimumDistance: 50)
@@ -483,62 +533,133 @@ struct MainView: View {
 
             Spacer()
 
-            // Speed
-            VStack(spacing: 2) {
-                Text(sensorDataService.sensorData.formattedSpeed)
-                    .font(.system(size: 72, weight: .bold, design: .rounded))
-                    .foregroundStyle(
-                        LinearGradient(colors: [.green, .cyan], startPoint: .leading, endPoint: .trailing)
+            // Speed - Hero Display with modern styling
+            ZStack {
+                // Subtle glow effect behind speed
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [speedColor.opacity(0.3), Color.clear],
+                            center: .center,
+                            startRadius: 5,
+                            endRadius: 100
+                        )
                     )
-                Text("mph")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.gray)
-                    .textCase(.uppercase)
-                    .tracking(2)
+                    .frame(width: 200, height: 200)
+                    .blur(radius: 30)
+
+                VStack(spacing: 4) {
+                    Text(sensorDataService.sensorData.formattedSpeed)
+                        .font(.system(size: 88, weight: .bold, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [speedColor, speedColor.opacity(0.7)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .shadow(color: speedColor.opacity(0.5), radius: 20, x: 0, y: 5)
+
+                    Text("mph")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.6))
+                        .textCase(.uppercase)
+                        .tracking(3)
+                }
             }
             .padding(.top, 8)
 
-            // Metrics (single row)
-            HStack(spacing: 8) {
-                ModernMetricCard(icon: "heart.fill", title: "HR", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
-                ModernMetricCard(icon: "flame.fill", title: "CAL", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "", color: .orange)
-                ModernMetricCard(icon: "map.fill", title: "DIST", value: sensorDataService.sensorData.formattedDistance, unit: "", color: .blue)
-                ModernMetricCard(icon: "clock.fill", title: "TIME", value: sensorDataService.sensorData.formattedDuration, unit: "", color: .purple)
+            // Metrics (single row - with cadence if available)
+            if hasCadenceSensor {
+                // Two rows when cadence is available
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        ModernMetricCard(icon: "heart.fill", title: "HR", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
+                        ModernMetricCard(icon: "flame.fill", title: "CAL", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "", color: .orange)
+                        ModernMetricCard(icon: "gauge", title: "CAD", value: "\(sensorDataService.sensorData.cadence)", unit: "rpm", color: .green)
+                    }
+                    HStack(spacing: 8) {
+                        ModernMetricCard(icon: "map.fill", title: "DIST", value: sensorDataService.sensorData.formattedDistance, unit: "", color: .blue)
+                        ModernMetricCard(icon: "clock.fill", title: "TIME", value: sensorDataService.sensorData.formattedDuration, unit: "", color: .purple)
+                        ModernMetricCard(icon: "speedometer", title: "AVG", value: String(format: "%.1f", sensorDataService.sensorData.averageSpeed), unit: "mph", color: .cyan)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            } else {
+                // Single row without cadence
+                HStack(spacing: 8) {
+                    ModernMetricCard(icon: "heart.fill", title: "HR", value: "\(sensorDataService.sensorData.heartRate)", unit: "bpm", color: .red)
+                    ModernMetricCard(icon: "flame.fill", title: "CAL", value: String(format: "%.0f", sensorDataService.sensorData.calories), unit: "", color: .orange)
+                    ModernMetricCard(icon: "map.fill", title: "DIST", value: sensorDataService.sensorData.formattedDistance, unit: "", color: .blue)
+                    ModernMetricCard(icon: "clock.fill", title: "TIME", value: sensorDataService.sensorData.formattedDuration, unit: "", color: .purple)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
 
             Spacer()
 
-            // Buttons
+            // Buttons - Modern glassmorphism style
             HStack(spacing: 12) {
                 Button(action: handleStartStop) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 10) {
                         Image(systemName: sensorDataService.isRecording ? "stop.fill" : "play.fill")
-                            .font(.system(size: 18, weight: .semibold))
-                        Text(sensorDataService.isRecording ? "Stop" : "Start")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(.system(size: 20, weight: .bold))
+                        Text(sensorDataService.isRecording ? "Stop Ride" : "Start Ride")
+                            .font(.system(size: 18, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 56)
+                    .frame(height: 60)
                     .background(
-                        LinearGradient(
-                            colors: sensorDataService.isRecording ? [.red, .red.opacity(0.8)] : [.green, .green.opacity(0.8)],
-                            startPoint: .top, endPoint: .bottom
-                        )
+                        ZStack {
+                            // Glassmorphism base
+                            RoundedRectangle(cornerRadius: 18)
+                                .fill(.ultraThinMaterial)
+
+                            // Gradient overlay
+                            RoundedRectangle(cornerRadius: 18)
+                                .fill(
+                                    LinearGradient(
+                                        colors: sensorDataService.isRecording ?
+                                            [Color.red.opacity(0.8), Color.red.opacity(0.6)] :
+                                            [Color.green.opacity(0.8), Color.green.opacity(0.6)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        }
                     )
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: sensorDataService.isRecording ? .red.opacity(0.3) : .green.opacity(0.3), radius: 8, x: 0, y: 4)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+                    .shadow(color: sensorDataService.isRecording ? Color.red.opacity(0.5) : Color.green.opacity(0.5), radius: 15, x: 0, y: 8)
+                    .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
                 }
 
                 Button(action: { sensorDataService.resetData() }) {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 56, height: 56)
-                        .background(Color.gray.opacity(0.3))
+                        .font(.system(size: 20, weight: .bold))
+                        .frame(width: 60, height: 60)
+                        .background(
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 18)
+                                    .fill(.ultraThinMaterial)
+
+                                RoundedRectangle(cornerRadius: 18)
+                                    .fill(Color.white.opacity(0.1))
+                            }
+                        )
                         .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 15, x: 0, y: 8)
                 }
             }
             .padding(.horizontal, 12)
@@ -574,13 +695,13 @@ struct MainView: View {
         case -0.3..<(-0.15):
             return .orange
         case -0.15..<0:
-            return Color(red: 1.0, green: 0.8, blue: 0.0) // Yellow-orange
+            return .yellow
         case 0..<0.1:
-            return Color(red: 0.6, green: 1.0, blue: 0.0) // Yellow-green
+            return .green
         case 0.1..<0.2:
             return .green
         case 0.2..<0.35:
-            return Color(red: 0.0, green: 1.0, blue: 0.5) // Bright green
+            return .mint // Bright green
         default:
             return .cyan // Super fast!
         }
@@ -716,26 +837,48 @@ struct MainView: View {
         }
     }
 
-    // Buttons for landscape (shared between views)
+    // Buttons for landscape (shared between views) - Simplified for performance
     private var landscapeButtons: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Button(action: handleStartStop) {
                 Image(systemName: sensorDataService.isRecording ? "stop.fill" : "play.fill")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(.system(size: 16, weight: .bold))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(sensorDataService.isRecording ? Color.red : Color.green)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(
+                                LinearGradient(
+                                    colors: sensorDataService.isRecording ?
+                                        [Color.red.opacity(0.9), Color.red.opacity(0.7)] :
+                                        [Color.green.opacity(0.9), Color.green.opacity(0.7)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    )
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    )
             }
-            .frame(height: 40)
+            .frame(height: 44)
 
             Button(action: { sensorDataService.resetData() }) {
                 Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 40, height: 40)
-                    .background(Color.gray.opacity(0.3))
+                    .font(.system(size: 16, weight: .bold))
+                    .frame(width: 44, height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.2))
+                    )
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    )
             }
         }
     }
@@ -932,7 +1075,7 @@ struct MainView: View {
     }
 }
 
-// MARK: - Landscape Metric Card
+// MARK: - Landscape Metric Card (Simplified for performance)
 struct LandscapeMetricCard: View {
     let icon: String
     let value: String
@@ -940,79 +1083,111 @@ struct LandscapeMetricCard: View {
     let color: Color
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 13))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(color)
-                .frame(width: 18)
+                .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(value)
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
 
                 if !unit.isEmpty {
                     Text(unit)
-                        .font(.system(size: 8))
-                        .foregroundColor(.gray)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.white.opacity(0.5))
+                        .textCase(.uppercase)
                 }
             }
 
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.05))
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.15),
+                            Color.white.opacity(0.08)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(color.opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(color.opacity(0.4), lineWidth: 1.5)
         )
     }
 }
 
-// MARK: - Simple Landscape Metric (Large Format)
+// MARK: - Simple Landscape Metric (Simplified for performance)
 struct SimpleLandscapeMetric: View {
     let value: String
     let label: String
     let color: Color
 
     var body: some View {
-        VStack(spacing: 8) {
-            // Large value
+        VStack(spacing: 6) {
+            // Large value with gradient
             Text(value)
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .foregroundColor(color)
+                .font(.system(size: 40, weight: .bold, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color, color.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
             // Label
             Text(label)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.gray)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.white.opacity(0.6))
                 .tracking(1.5)
                 .textCase(.uppercase)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.08))
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.15),
+                            Color.white.opacity(0.08)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(color.opacity(0.4), lineWidth: 2)
+                .stroke(
+                    LinearGradient(
+                        colors: [color.opacity(0.6), color.opacity(0.3)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 2
+                )
         )
     }
 }
 
-// MARK: - Portrait Metric Card
+// MARK: - Portrait Metric Card (Glassmorphism)
 struct ModernMetricCard: View {
     let icon: String
     let title: String
@@ -1021,39 +1196,73 @@ struct ModernMetricCard: View {
     let color: Color
 
     var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundStyle(color)
+        VStack(spacing: 8) {
+            // Icon with subtle glow
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.2))
+                    .frame(width: 32, height: 32)
+                    .blur(radius: 8)
+
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(color)
+            }
 
             Text(value)
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             Text(title)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.gray)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white.opacity(0.6))
                 .textCase(.uppercase)
-                .tracking(0.5)
+                .tracking(1)
 
             if !unit.isEmpty {
                 Text(unit)
-                    .font(.system(size: 8))
-                    .foregroundColor(.gray.opacity(0.7))
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.4))
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(.vertical, 16)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.05))
+            ZStack {
+                // Glassmorphism background
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.7)
+
+                // Subtle gradient overlay
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.15),
+                                Color.white.opacity(0.05)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(color.opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(
+                    LinearGradient(
+                        colors: [color.opacity(0.5), color.opacity(0.2)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
         )
+        .shadow(color: color.opacity(0.3), radius: 10, x: 0, y: 5)
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
     }
 }
 
@@ -1184,7 +1393,7 @@ struct SensorSettingsView: View {
 
                                 // Connection status, battery, and reconnect button
                                 HStack {
-                                    if bluetoothService.connectedSensors[sensorType] != nil {
+                                    if bluetoothService.isConnected(sensorType) {
                                         HStack(spacing: 8) {
                                             Text("✓ Connected")
                                                 .font(.caption)

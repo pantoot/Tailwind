@@ -2,40 +2,35 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDisplayName</key>
-    <string>Import to Tailwind</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$(PRODUCT_NAME)</string>
-    <key>CFBundlePackageType</key>
-    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-    <key>CFBundleShortVersionString</key>
-    <string>2.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>NSExtension</key>
-    <dict>
-        <key>NSExtensionAttributes</key>
-        <dict>
-            <key>NSExtensionActivationRule</key>
-            <dict>
-                <key>NSExtensionActivationSupportsFileWithMaxCount</key>
-                <integer>1</integer>
-                <key>NSExtensionActivationSupportsText</key>
-                <false/>
-                <key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-                <integer>0</integer>
-            </dict>
-        </dict>
-        <key>NSExtensionPointIdentifier</key>
-        <string>com.apple.share-services</string>
-        <key>NSExtensionPrincipalClass</key>
-        <string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
-    </dict>
+	<key>CFBundleDisplayName</key>
+	<string>Import to Tailwind</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<!-- Activate for files (including FIT files) -->
+				<key>NSExtensionActivationSupportsFileWithMaxCount</key>
+				<integer>1</integer>
+				<!-- Also support web URLs in case Magene shares that way -->
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+				<integer>0</integer>
+				<!-- Support text for potential file paths -->
+				<key>NSExtensionActivationSupportsText</key>
+				<false/>
+				<!-- Support images = no -->
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+				<integer>0</integer>
+				<!-- Support movies = no -->
+				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>
+				<integer>0</integer>
+			</dict>
+		</dict>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+	</dict>
 </dict>
 </plist>

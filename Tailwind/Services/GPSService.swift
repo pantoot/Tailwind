@@ -18,6 +18,11 @@ class GPSService: NSObject, ObservableObject {
     // Track full location data for speed heatmap
     private var routeLocations: [CLLocation] = []
 
+    // Maximum coordinates to store (prevents memory issues on very long rides)
+    // 10,000 points at 5m intervals = ~50km, plenty for most rides
+    // If exceeded, we downsample by removing every other point
+    private let maxRoutePoints = 10000
+
     // Motion detection to filter GPS drift
     private let motionManager = CMMotionManager()
     private var isDeviceMoving: Bool = false
@@ -260,6 +265,14 @@ extension GPSService: CLLocationManagerDelegate {
         if isTracking {
             routeCoordinates.append(location.coordinate)
             routeLocations.append(location)
+
+            // Downsample if we've exceeded max points (very long rides)
+            // Removes every other point to halve the array size while preserving route shape
+            if routeCoordinates.count > maxRoutePoints {
+                print("GPS: Route exceeded \(maxRoutePoints) points, downsampling...")
+                routeCoordinates = routeCoordinates.enumerated().compactMap { $0.offset % 2 == 0 ? $0.element : nil }
+                routeLocations = routeLocations.enumerated().compactMap { $0.offset % 2 == 0 ? $0.element : nil }
+            }
         }
 
         // Callback

@@ -13,12 +13,15 @@ class SensorDataService: ObservableObject {
     private var lastCalorieUpdate: Date?
     private var lastHeartRateUpdate: Date? // Track when we last got HR data
     private var lastBluetoothHRUpdate: Date? // Track Bluetooth HR specifically
+    private var lastCadenceUpdate: Date? // Track when we last got cadence data
+    private var lastSensorSpeedUpdate: Date? // Track when we last got speed sensor data
     private var pausedTime: TimeInterval = 0 // Total time spent paused
     private var pauseStartTime: Date? // When current pause started
 
     // Stale data timeout - if no HR update in 10 seconds, clear display
     private let hrStaleTimeout: TimeInterval = 10.0
     private let bluetoothHRTimeout: TimeInterval = 5.0 // Prefer Bluetooth if received in last 5 seconds
+    private let sensorActivityTimeout: TimeInterval = 5.0 // Consider sensors active if data within 5 seconds
 
     // Track max values during ride
     private var maxSpeed: Double = 0.0
@@ -32,7 +35,28 @@ class SensorDataService: ObservableObject {
     // Auto-pause settings
     var autoPauseEnabled = true
     private let autoPauseSpeedThreshold = 0.5 // mph - pause when below this speed
-    private let autoPauseDelay = 3.0 // seconds - delay before auto-pausing
+    private let autoPauseDelay = 15.0 // seconds - delay before auto-pausing
+
+    // Check if we have recent sensor activity indicating movement
+    private func hasSensorActivity() -> Bool {
+        let now = Date()
+
+        // Check cadence - if pedaling recently, we're definitely moving
+        if let lastCadence = lastCadenceUpdate,
+           now.timeIntervalSince(lastCadence) < sensorActivityTimeout,
+           sensorData.cadence > 0 {
+            return true
+        }
+
+        // Check speed sensor - if wheel is turning, we're moving
+        if let lastSpeed = lastSensorSpeedUpdate,
+           now.timeIntervalSince(lastSpeed) < sensorActivityTimeout,
+           sensorData.speed > autoPauseSpeedThreshold {
+            return true
+        }
+
+        return false
+    }
 
     func startRecording() {
         isRecording = true
@@ -93,24 +117,32 @@ class SensorDataService: ObservableObject {
         }
     }
 
-    func updateSpeed(_ speed: Double) {
+    func updateSpeed(_ speed: Double, fromSensor: Bool = false) {
         sensorData.speed = speed
+
+        // Track when we got speed sensor data (not GPS)
+        if fromSensor {
+            lastSensorSpeedUpdate = Date()
+        }
 
         // Handle auto-pause
         if isRecording && autoPauseEnabled {
-            if speed < autoPauseSpeedThreshold {
-                // Speed is low - start pause timer if not already paused
+            // Check if sensors show activity (pedaling or wheel movement)
+            let sensorsShowMovement = hasSensorActivity()
+
+            if speed < autoPauseSpeedThreshold && !sensorsShowMovement {
+                // Speed is low AND no sensor activity - start pause timer if not already paused
                 if !isPaused && pauseStartTime == nil {
                     pauseStartTime = Date()
                 } else if !isPaused, let pauseStart = pauseStartTime {
                     // Check if we've been below threshold long enough
                     if Date().timeIntervalSince(pauseStart) >= autoPauseDelay {
                         isPaused = true
-                        print("🛑 Auto-paused at \(String(format: "%.1f", speed)) mph")
+                        print("🛑 Auto-paused at \(String(format: "%.1f", speed)) mph (no sensor activity)")
                     }
                 }
             } else {
-                // Speed is above threshold
+                // Speed is above threshold OR sensors show movement
                 if isPaused {
                     // Resume from pause
                     isPaused = false
@@ -118,7 +150,8 @@ class SensorDataService: ObservableObject {
                         pausedTime += Date().timeIntervalSince(pauseStart)
                     }
                     pauseStartTime = nil
-                    print("▶️ Auto-resumed at \(String(format: "%.1f", speed)) mph")
+                    let reason = sensorsShowMovement ? "sensor activity" : "speed"
+                    print("▶️ Auto-resumed at \(String(format: "%.1f", speed)) mph (\(reason))")
                 }
                 // Reset pause timer
                 pauseStartTime = nil
@@ -142,6 +175,11 @@ class SensorDataService: ObservableObject {
 
     func updateCadence(_ cadence: Int) {
         sensorData.cadence = cadence
+
+        // Track when we got cadence data for auto-pause logic
+        if cadence > 0 {
+            lastCadenceUpdate = Date()
+        }
     }
 
     // Update HR from Bluetooth sensor (highest priority)

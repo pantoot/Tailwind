@@ -29,6 +29,7 @@ struct HistoryTabView: View {
             .navigationTitle("History & Analytics")
             .sheet(item: $selectedRide) { ride in
                 RideDetailView(ride: ride)
+                    .environmentObject(healthKitService)
             }
         }
     }

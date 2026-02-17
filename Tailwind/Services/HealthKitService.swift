@@ -1,6 +1,7 @@
 import Foundation
 import HealthKit
 import Combine
+import CoreLocation
 
 class HealthKitService: ObservableObject {
     private let healthStore = HKHealthStore()
@@ -9,6 +10,7 @@ class HealthKitService: ObservableObject {
     // Health data types we want to write
     private let typesToWrite: Set<HKSampleType> = [
         HKObjectType.workoutType(),
+        HKSeriesType.workoutRoute(),
         HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .heartRate)!
@@ -17,6 +19,7 @@ class HealthKitService: ObservableObject {
     // Health data types we want to read (optional, for future features)
     private let typesToRead: Set<HKObjectType> = [
         HKObjectType.workoutType(),
+        HKSeriesType.workoutRoute(),
         HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .heartRate)!
@@ -230,7 +233,7 @@ class HealthKitService: ObservableObject {
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: compound,
-                limit: HKObjectQueryNoLimit,
+                limit: 10, // Should only be 1-2 matches, but limit to 10 for safety
                 sortDescriptors: nil
             ) { _, samples, error in
                 if let error = error {
@@ -252,7 +255,7 @@ class HealthKitService: ObservableObject {
 
     // MARK: - Import Workouts
 
-    // Fetch cycling workouts from HealthKit
+    // Fetch cycling workouts from HealthKit (limited to 100 most recent to prevent memory issues)
     func fetchCyclingWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {
         guard isHealthKitAvailable else {
             throw HealthKitError.notAvailable
@@ -271,7 +274,7 @@ class HealthKitService: ObservableObject {
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: compound,
-                limit: HKObjectQueryNoLimit,
+                limit: 100, // Limit to 100 workouts to prevent memory issues
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
@@ -285,9 +288,13 @@ class HealthKitService: ObservableObject {
     }
 
     // Import a HealthKit workout as a Ride
-    func importWorkout(_ workout: HKWorkout) async throws -> Ride {
+    // Set writeActiveEnergy: true to also write a standalone Active Energy sample (helps with Move ring)
+    func importWorkout(_ workout: HKWorkout, writeActiveEnergy: Bool = true) async throws -> Ride {
         // Get heart rate data for this workout
         let heartRateData = try await fetchHeartRateData(for: workout)
+
+        // Try to fetch route data from HealthKit
+        let routeCoordinates = await fetchRouteData(for: workout)
 
         // Load user profile for threshold HR
         let userProfile = UserProfile.load()
@@ -343,7 +350,7 @@ class HealthKitService: ObservableObject {
             maxHeartRate: Int(heartRateData.max), // Convert Double to Int
             calories: calories,
             elevationGain: nil,
-            routeCoordinates: nil,
+            routeCoordinates: routeCoordinates,
             notes: "Imported from \(workoutSource)",
             bikeName: nil,
             bikeType: nil,
@@ -351,11 +358,179 @@ class HealthKitService: ObservableObject {
             hrTSS: hrTSS
         )
 
-        print("✅ Imported workout: \(distance) mi, \(duration)s, \(heartRateData.average) bpm avg")
+        // Create a Tailwind workout with Active Energy for Move ring credit
+        // Third-party apps like Peloton often write calories only as workout metadata,
+        // which Apple's Move ring ignores. Creating a proper workout fixes this.
+        if writeActiveEnergy && calories > 0 {
+            let configuration = HKWorkoutConfiguration()
+            configuration.activityType = .cycling
+            configuration.locationType = isIndoor ? .indoor : .outdoor
+
+            let builder = HKWorkoutBuilder(
+                healthStore: healthStore,
+                configuration: configuration,
+                device: .local()
+            )
+
+            try await builder.beginCollection(at: workout.startDate)
+
+            let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+            let caloriesSample = HKQuantitySample(
+                type: activeEnergyType,
+                quantity: HKQuantity(unit: .kilocalorie(), doubleValue: calories),
+                start: workout.startDate,
+                end: workout.endDate
+            )
+            try await builder.addSamples([caloriesSample])
+
+            if distance > 0 {
+                let distanceSample = HKQuantitySample(
+                    type: HKQuantityType.quantityType(forIdentifier: .distanceCycling)!,
+                    quantity: HKQuantity(unit: .mile(), doubleValue: distance),
+                    start: workout.startDate,
+                    end: workout.endDate
+                )
+                try await builder.addSamples([distanceSample])
+            }
+
+            try await builder.addMetadata([
+                HKMetadataKeyIndoorWorkout: isIndoor,
+                "Tailwind": true,
+                "ImportedFrom": workoutSource
+            ])
+
+            try await builder.endCollection(at: workout.endDate)
+            _ = try await builder.finishWorkout()
+
+            print("🔥 Created workout for Move ring: \(Int(calories)) kcal")
+        }
+
+        print("✅ Imported workout: \(distance) mi, \(duration)s, \(heartRateData.average) bpm avg, \(Int(calories)) kcal")
         return ride
     }
 
-    // Fetch heart rate data for a specific workout
+    /// Write a workout with Active Energy sample for a ride (fixes Move ring for third-party workouts)
+    /// Creates a full HKWorkout which Move ring respects, not just a standalone sample
+    func writeActiveEnergy(for ride: Ride) async throws {
+        guard isHealthKitAvailable else {
+            throw HealthKitError.notAvailable
+        }
+
+        guard ride.calories > 0 else {
+            print("⚠️ No calories to write for ride")
+            return
+        }
+
+        let endDate = ride.date.addingTimeInterval(ride.duration)
+
+        // Create a workout (Move ring respects workouts, not standalone samples)
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .cycling
+        configuration.locationType = (ride.routeCoordinates?.isEmpty ?? true) ? .indoor : .outdoor
+
+        let builder = HKWorkoutBuilder(
+            healthStore: healthStore,
+            configuration: configuration,
+            device: .local()
+        )
+
+        try await builder.beginCollection(at: ride.date)
+
+        // Add Active Energy sample
+        let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        let caloriesSample = HKQuantitySample(
+            type: activeEnergyType,
+            quantity: HKQuantity(unit: .kilocalorie(), doubleValue: ride.calories),
+            start: ride.date,
+            end: endDate
+        )
+        try await builder.addSamples([caloriesSample])
+
+        // Add distance if available
+        if ride.distance > 0 {
+            let distanceSample = HKQuantitySample(
+                type: HKQuantityType.quantityType(forIdentifier: .distanceCycling)!,
+                quantity: HKQuantity(unit: .mile(), doubleValue: ride.distance),
+                start: ride.date,
+                end: endDate
+            )
+            try await builder.addSamples([distanceSample])
+        }
+
+        // Add metadata
+        try await builder.addMetadata([
+            HKMetadataKeyIndoorWorkout: (ride.routeCoordinates?.isEmpty ?? true),
+            "Tailwind": true,
+            "MoveRingFix": true
+        ])
+
+        try await builder.endCollection(at: endDate)
+        let workout = try await builder.finishWorkout()
+
+        print("🔥 Created workout with Active Energy: \(Int(ride.calories)) kcal for Move ring")
+        print("   Workout ID: \(workout?.uuid.uuidString ?? "unknown")")
+    }
+
+    // MARK: - Heart Rate Data Fetching
+
+    /// Fetch detailed heart rate samples for a time range (for merging Watch HR into imported rides)
+    /// Returns samples at ~5 second intervals to match FIT import resolution
+    func fetchHeartRateSamples(from startDate: Date, to endDate: Date) async throws -> [(date: Date, bpm: Double)] {
+        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: heartRateType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+            ) { _, results, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                }
+            }
+            healthStore.execute(query)
+        }
+
+        let hrUnit = HKUnit.count().unitDivided(by: .minute())
+
+        // Downsample to ~5 second intervals to match FIT import
+        var result: [(date: Date, bpm: Double)] = []
+        var lastSampleTime: Date?
+        let downsampleInterval: TimeInterval = 5.0
+
+        for sample in samples {
+            let shouldInclude: Bool
+            if let last = lastSampleTime {
+                shouldInclude = sample.startDate.timeIntervalSince(last) >= downsampleInterval
+            } else {
+                shouldInclude = true
+            }
+
+            if shouldInclude {
+                let bpm = sample.quantity.doubleValue(for: hrUnit)
+                // Filter valid HR range
+                if bpm > 30 && bpm < 250 {
+                    result.append((date: sample.startDate, bpm: bpm))
+                    lastSampleTime = sample.startDate
+                }
+            }
+        }
+
+        print("❤️ Fetched \(result.count) HR samples from HealthKit (from \(samples.count) total)")
+        return result
+    }
+
+    // Fetch heart rate data for a specific workout using statistics (memory efficient)
+    // Returns (0, 0) if no HR data available - does not throw
     private func fetchHeartRateData(for workout: HKWorkout) async throws -> (average: Double, max: Double) {
         let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
 
@@ -365,31 +540,107 @@ class HealthKitService: ObservableObject {
             options: .strictStartDate
         )
 
-        let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(
-                sampleType: heartRateType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: nil
-            ) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: samples as? [HKQuantitySample] ?? [])
+        // Use statistics query instead of fetching all samples - much more memory efficient
+        // Catch "no data" errors and return zeros instead of throwing
+        do {
+            let statistics = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<HKStatistics?, Error>) in
+                let query = HKStatisticsQuery(
+                    quantityType: heartRateType,
+                    quantitySamplePredicate: predicate,
+                    options: [.discreteAverage, .discreteMax]
+                ) { _, statistics, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: statistics)
+                    }
                 }
+                healthStore.execute(query)
             }
-            healthStore.execute(query)
-        }
 
-        guard !samples.isEmpty else {
+            guard let stats = statistics else {
+                return (0, 0)
+            }
+
+            let hrUnit = HKUnit.count().unitDivided(by: .minute())
+            let average = stats.averageQuantity()?.doubleValue(for: hrUnit) ?? 0
+            let max = stats.maximumQuantity()?.doubleValue(for: hrUnit) ?? 0
+
+            return (average, max)
+        } catch {
+            // "No data available for the specified predicate" is common for workouts without HR
+            print("⚠️ No HR data for workout on \(workout.startDate): \(error.localizedDescription)")
             return (0, 0)
         }
+    }
 
-        let heartRates = samples.map { $0.quantity.doubleValue(for: HKUnit.count().unitDivided(by: .minute())) }
-        let average = heartRates.reduce(0, +) / Double(heartRates.count)
-        let max = heartRates.max() ?? 0
+    // Fetch route data (GPS coordinates) for a workout from HealthKit
+    // Returns nil if no route data available
+    private func fetchRouteData(for workout: HKWorkout) async -> [Ride.Coordinate]? {
+        // Query for workout routes associated with this workout
+        let routeType = HKSeriesType.workoutRoute()
+        let predicate = HKQuery.predicateForObjects(from: workout)
 
-        return (average, max)
+        do {
+            // First, get the HKWorkoutRoute objects
+            let routes: [HKWorkoutRoute] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: routeType,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: nil
+                ) { _, samples, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: samples as? [HKWorkoutRoute] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            guard let route = routes.first else {
+                print("📍 No route data found for workout on \(workout.startDate)")
+                return nil
+            }
+
+            // Now extract the location data from the route
+            let locations: [CLLocation] = try await withCheckedThrowingContinuation { continuation in
+                var allLocations: [CLLocation] = []
+
+                let routeQuery = HKWorkoutRouteQuery(route: route) { _, locationsOrNil, done, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+
+                    if let newLocations = locationsOrNil {
+                        allLocations.append(contentsOf: newLocations)
+                    }
+
+                    if done {
+                        continuation.resume(returning: allLocations)
+                    }
+                }
+                self.healthStore.execute(routeQuery)
+            }
+
+            // Convert to Ride.Coordinate, downsampling to every 5th point to save memory
+            let coordinates = locations.enumerated().compactMap { index, location -> Ride.Coordinate? in
+                guard index % 5 == 0 else { return nil }
+                return Ride.Coordinate(
+                    latitude: location.coordinate.latitude,
+                    longitude: location.coordinate.longitude
+                )
+            }
+
+            print("📍 Recovered \(coordinates.count) GPS points from HealthKit (from \(locations.count) total)")
+            return coordinates.isEmpty ? nil : coordinates
+
+        } catch {
+            print("⚠️ Failed to fetch route data: \(error.localizedDescription)")
+            return nil
+        }
     }
 }
 

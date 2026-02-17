@@ -2,19 +2,48 @@ import Foundation
 import CoreBluetooth
 import Combine
 
+// Track what data a CSC sensor provides
+struct SensorCapability {
+    var providesSpeed: Bool = false
+    var providesCadence: Bool = false
+    var providesHeartRate: Bool = false
+    var providesPower: Bool = false
+
+    var primaryType: SensorType {
+        if providesSpeed && providesCadence {
+            return .speed // Combined sensor, default to speed
+        } else if providesSpeed {
+            return .speed
+        } else if providesCadence {
+            return .cadence
+        } else if providesHeartRate {
+            return .heartRate
+        } else if providesPower {
+            return .power
+        }
+        return .speed // Fallback
+    }
+}
+
 class BluetoothService: NSObject, ObservableObject {
     @Published var discoveredSensors: [SensorInfo] = []
-    @Published var connectedSensors: [SensorType: SensorInfo] = [:]
+    @Published var connectedSensors: [UUID: SensorInfo] = [:] // Changed: UUID -> SensorInfo (supports multiple sensors per type)
     @Published var isScanning = false
     @Published var bluetoothState: CBManagerState = .unknown
+
+    // Computed property for backward compatibility: Check if sensor type is connected
+    func isConnected(_ sensorType: SensorType) -> Bool {
+        connectedSensors.values.contains(where: { $0.type == sensorType })
+    }
 
     private var centralManager: CBCentralManager!
     private var connectedPeripherals: [CBPeripheral] = []
     private var connectingPeripherals: [CBPeripheral] = [] // Keep strong reference during connection
     private var peripheralMap: [UUID: CBPeripheral] = [:] // UUID -> Peripheral
     private var sensorInfoMap: [UUID: SensorInfo] = [:] // UUID -> SensorInfo
-    private var peripheralToTypeMap: [UUID: SensorType] = [:] // UUID -> SensorType
+    private var peripheralToTypeMap: [UUID: SensorType] = [:] // UUID -> SensorType (initial type, may be refined)
     private var batteryLevels: [UUID: Int] = [:] // UUID -> Battery %
+    private var sensorCapabilities: [UUID: SensorCapability] = [:] // UUID -> What data this sensor provides
 
     // Remember previously connected devices
     private let connectedDevicesKey = "ConnectedDeviceUUIDs"
@@ -24,6 +53,12 @@ class BluetoothService: NSObject, ObservableObject {
     var onSpeedUpdate: ((Double) -> Void)?
     var onCadenceUpdate: ((Int) -> Void)?
     var onHeartRateUpdate: ((Int) -> Void)?
+
+    // Last sensor values for live display in sensor editor
+    @Published var lastSpeedValue: Double?
+    @Published var lastCadenceValue: Int?
+    @Published var lastHeartRateValue: Int?
+    @Published var lastPowerValue: Int?
 
     // Track last values for calculating deltas
     private var lastWheelRevolutions: UInt32 = 0
@@ -85,12 +120,10 @@ class BluetoothService: NSObject, ObservableObject {
                     sensorInfoMap[peripheral.identifier] = sensorInfo
                     peripheralToTypeMap[peripheral.identifier] = type
 
-                    // Also add to connected sensors if not already there
-                    if connectedSensors[type] == nil {
-                        connectedSensors[type] = sensorInfo
-                        if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
-                            connectedPeripherals.append(peripheral)
-                        }
+                    // Also add to connected sensors (using UUID as key)
+                    connectedSensors[peripheral.identifier] = sensorInfo
+                    if !connectedPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+                        connectedPeripherals.append(peripheral)
                     }
 
                     print("📱 Found already-connected \(type.rawValue): \(peripheral.name ?? "Unknown")")
@@ -131,21 +164,32 @@ class BluetoothService: NSObject, ObservableObject {
         }
     }
 
-    func disconnect(from sensorType: SensorType) {
-        guard let sensorInfo = connectedSensors[sensorType],
-              let peripheral = peripheralMap[sensorInfo.id] else {
+    func disconnect(from sensorId: UUID) {
+        guard let peripheral = peripheralMap[sensorId] else {
             return
         }
 
         centralManager.cancelPeripheralConnection(peripheral)
     }
 
+    // Convenience method for disconnecting by type (disconnects first matching sensor)
+    func disconnect(from sensorType: SensorType) {
+        if let sensorId = connectedSensors.first(where: { $0.value.type == sensorType })?.key {
+            disconnect(from: sensorId)
+        }
+    }
+
     // MARK: - Sensor Assignment Helpers
+
+    // Helper: Get sensor info for a specific type (finds first match)
+    private func getSensorInfo(for sensorType: SensorType) -> (id: UUID, info: SensorInfo)? {
+        connectedSensors.first(where: { $0.value.type == sensorType }).map { ($0.key, $0.value) }
+    }
 
     // Get peripheral ID for a connected sensor
     func getPeripheralId(for sensorType: SensorType) -> String? {
-        guard let sensorInfo = connectedSensors[sensorType],
-              let peripheral = peripheralMap[sensorInfo.id] else {
+        guard let (uuid, _) = getSensorInfo(for: sensorType),
+              let peripheral = peripheralMap[uuid] else {
             return nil
         }
         return peripheral.identifier.uuidString
@@ -153,8 +197,8 @@ class BluetoothService: NSObject, ObservableObject {
 
     // Create SavedSensor from currently connected sensor
     func createSavedSensor(for sensorType: SensorType, customName: String? = nil) -> SavedSensor? {
-        guard let sensorInfo = connectedSensors[sensorType],
-              let peripheral = peripheralMap[sensorInfo.id] else {
+        guard let (uuid, _) = getSensorInfo(for: sensorType),
+              let peripheral = peripheralMap[uuid] else {
             return nil
         }
 
@@ -168,10 +212,10 @@ class BluetoothService: NSObject, ObservableObject {
 
     // Get battery level for a sensor type
     func getBatteryLevel(for sensorType: SensorType) -> Int? {
-        guard let sensorInfo = connectedSensors[sensorType] else {
+        guard let (uuid, _) = getSensorInfo(for: sensorType) else {
             return nil
         }
-        return batteryLevels[sensorInfo.id]
+        return batteryLevels[uuid]
     }
 
     // Connect to a specific peripheral by ID (for auto-reconnect)
@@ -214,9 +258,9 @@ class BluetoothService: NSObject, ObservableObject {
 
     // Disconnect bike-specific sensors only (keep profile sensors like heart rate)
     func disconnectBikeSensors() {
-        for (sensorType, _) in connectedSensors {
-            if !sensorType.isProfileSensor {
-                disconnect(from: sensorType)
+        for (uuid, sensorInfo) in connectedSensors {
+            if !sensorInfo.type.isProfileSensor {
+                disconnect(from: uuid)
             }
         }
     }
@@ -246,8 +290,8 @@ extension BluetoothService: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String : Any], rssi RSSI: NSNumber) {
         let name = peripheral.name ?? "Unknown Device"
 
-        // Determine sensor type based on services
-        let sensorType = determineSensorType(from: advertisementData)
+        // Determine sensor type based on services and device name
+        let sensorType = determineSensorType(from: advertisementData, deviceName: name)
 
         let sensorInfo = SensorInfo(
             id: peripheral.identifier,
@@ -256,8 +300,15 @@ extension BluetoothService: CBCentralManagerDelegate {
             rssi: RSSI.intValue
         )
 
-        // Add to discovered sensors if not already present
-        if !discoveredSensors.contains(where: { $0.id == peripheral.identifier }) {
+        // Add to discovered sensors if not already present, or update if type changed
+        if let existingIndex = discoveredSensors.firstIndex(where: { $0.id == peripheral.identifier }) {
+            // Update existing sensor if type was refined
+            if discoveredSensors[existingIndex].type != sensorType {
+                print("🔄 Updated sensor type: \(name) from \(discoveredSensors[existingIndex].type.rawValue) to \(sensorType.rawValue)")
+                discoveredSensors[existingIndex].type = sensorType
+            }
+        } else {
+            // Add new sensor
             discoveredSensors.append(sensorInfo)
             peripheralMap[peripheral.identifier] = peripheral
         }
@@ -277,7 +328,7 @@ extension BluetoothService: CBCentralManagerDelegate {
         if let sensorInfo = sensorInfoMap.values.first(where: { peripheralMap[$0.id] == peripheral }) {
             var updatedInfo = sensorInfo
             updatedInfo.isConnected = true
-            connectedSensors[sensorInfo.type] = updatedInfo
+            connectedSensors[peripheral.identifier] = updatedInfo
 
             // Update in discovered sensors list
             if let index = discoveredSensors.firstIndex(where: { $0.id == sensorInfo.id }) {
@@ -295,7 +346,7 @@ extension BluetoothService: CBCentralManagerDelegate {
                 isConnected: true
             )
             sensorInfoMap[peripheral.identifier] = sensorInfo
-            connectedSensors[type] = sensorInfo
+            connectedSensors[peripheral.identifier] = sensorInfo
 
             print("✅ Auto-reconnected \(type.rawValue): \(peripheral.name ?? "Unknown")")
         }
@@ -306,17 +357,32 @@ extension BluetoothService: CBCentralManagerDelegate {
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         print("Disconnected from \(peripheral.name ?? "unknown")")
 
+        let uuid = peripheral.identifier
+
         // Remove from connected peripherals
-        connectedPeripherals.removeAll { $0.identifier == peripheral.identifier }
-        connectingPeripherals.removeAll { $0.identifier == peripheral.identifier }
+        connectedPeripherals.removeAll { $0.identifier == uuid }
+        connectingPeripherals.removeAll { $0.identifier == uuid }
 
         // Update sensor status
-        if let sensorInfo = sensorInfoMap.values.first(where: { peripheralMap[$0.id] == peripheral }) {
-            connectedSensors.removeValue(forKey: sensorInfo.type)
+        connectedSensors.removeValue(forKey: uuid)
 
+        // Update discovered sensors list
+        if let sensorInfo = sensorInfoMap.values.first(where: { peripheralMap[$0.id] == peripheral }) {
             if let index = discoveredSensors.firstIndex(where: { $0.id == sensorInfo.id }) {
                 discoveredSensors[index].isConnected = false
             }
+        }
+
+        // Clean up all cached data for this peripheral to prevent memory leaks
+        // Only cleanup if not auto-reconnecting (to preserve data during reconnection attempts)
+        let shouldCleanup = error == nil || !isConnectedDevice(uuid: uuid)
+        if shouldCleanup {
+            peripheralMap.removeValue(forKey: uuid)
+            sensorInfoMap.removeValue(forKey: uuid)
+            peripheralToTypeMap.removeValue(forKey: uuid)
+            batteryLevels.removeValue(forKey: uuid)
+            sensorCapabilities.removeValue(forKey: uuid)
+            print("🧹 Cleaned up cached data for disconnected sensor")
         }
 
         if let error = error {
@@ -324,13 +390,13 @@ extension BluetoothService: CBCentralManagerDelegate {
         }
 
         // Auto-reconnect if this was unexpected
-        if error != nil && isConnectedDevice(uuid: peripheral.identifier) {
+        if error != nil && isConnectedDevice(uuid: uuid) {
             print("Attempting to reconnect to \(peripheral.name ?? "unknown")...")
-            if !connectingPeripherals.contains(where: { $0.identifier == peripheral.identifier }) {
+            if !connectingPeripherals.contains(where: { $0.identifier == uuid }) {
                 connectingPeripherals.append(peripheral)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                self.centralManager.connect(peripheral, options: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.centralManager.connect(peripheral, options: nil)
             }
         }
     }
@@ -346,19 +412,70 @@ extension BluetoothService: CBCentralManagerDelegate {
         }
     }
 
-    private func determineSensorType(from advertisementData: [String: Any]) -> SensorType {
+    private func determineSensorType(from advertisementData: [String: Any], deviceName: String) -> SensorType {
         guard let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] else {
             return .speed // Default
         }
 
-        if serviceUUIDs.contains(CBUUID(string: "1816")) {
-            return .speed // Could be speed or cadence
-        } else if serviceUUIDs.contains(CBUUID(string: "180D")) {
+        // Check for specific sensor types
+        if serviceUUIDs.contains(CBUUID(string: "180D")) {
             return .heartRate
         } else if serviceUUIDs.contains(CBUUID(string: "1818")) {
             return .power
+        } else if serviceUUIDs.contains(CBUUID(string: "1816")) {
+            // CSC (Cycling Speed and Cadence) Service - check device name for specific type
+            return detectCSCSensorType(from: deviceName)
         }
 
+        return .speed
+    }
+
+    // Detect specific CSC sensor type from device name patterns
+    private func detectCSCSensorType(from deviceName: String) -> SensorType {
+        let name = deviceName.uppercased()
+
+        // Common naming patterns:
+        // Speed sensors often end with: S, SPD, SPEED
+        // Cadence sensors often end with: C, CAD, CADENCE
+        // Examples: BK6LS (speed), BK6LC (cadence), WAHOO_SPD, GARMIN_CAD
+
+        // Check suffix patterns
+        if name.hasSuffix("C") || name.hasSuffix("CAD") || name.hasSuffix("CADENCE") {
+            print("🔵 Detected CADENCE sensor from name: \(deviceName)")
+            return .cadence
+        } else if name.hasSuffix("S") || name.hasSuffix("SPD") || name.hasSuffix("SPEED") {
+            print("🔵 Detected SPEED sensor from name: \(deviceName)")
+            return .speed
+        }
+
+        // Check for patterns within the name
+        if name.contains("CADENCE") || name.contains("CAD") {
+            print("🔵 Detected CADENCE sensor from name pattern: \(deviceName)")
+            return .cadence
+        } else if name.contains("SPEED") || name.contains("SPD") {
+            print("🔵 Detected SPEED sensor from name pattern: \(deviceName)")
+            return .speed
+        }
+
+        // Special case: Check for specific manufacturer patterns
+        // BK6L series: Last letter before hyphen indicates type
+        if name.hasPrefix("BK6L") {
+            // Extract letter before hyphen or digits
+            let pattern = "BK6L([SC])"
+            if let range = name.range(of: pattern, options: .regularExpression) {
+                let letter = String(name[range]).suffix(1)
+                if letter == "C" {
+                    print("🔵 Detected BK6LC CADENCE sensor: \(deviceName)")
+                    return .cadence
+                } else if letter == "S" {
+                    print("🔵 Detected BK6LS SPEED sensor: \(deviceName)")
+                    return .speed
+                }
+            }
+        }
+
+        // Default to speed for CSC sensors when pattern is unclear
+        print("⚠️ Could not determine CSC sensor type from name '\(deviceName)', defaulting to SPEED")
         return .speed
     }
 }
@@ -395,11 +512,11 @@ extension BluetoothService: CBPeripheralDelegate {
         // Parse based on characteristic UUID
         switch characteristic.uuid.uuidString {
         case "2A5B": // CSC Measurement (Cycling Speed and Cadence)
-            parseCSCMeasurement(data: data)
+            parseCSCMeasurement(data: data, peripheral: peripheral)
         case "2A37": // Heart Rate Measurement
-            parseHeartRateMeasurement(data: data)
+            parseHeartRateMeasurement(data: data, peripheral: peripheral)
         case "2A63": // Cycling Power Measurement
-            parsePowerMeasurement(data: data)
+            parsePowerMeasurement(data: data, peripheral: peripheral)
         case "2A19": // Battery Level
             parseBatteryLevel(data: data, peripheral: peripheral)
         default:
@@ -409,7 +526,7 @@ extension BluetoothService: CBPeripheralDelegate {
 
     // MARK: - Data Parsing
 
-    private func parseCSCMeasurement(data: Data) {
+    private func parseCSCMeasurement(data: Data, peripheral: CBPeripheral) {
         guard data.count >= 1 else { return }
 
         let flags = data[0]
@@ -417,6 +534,29 @@ extension BluetoothService: CBPeripheralDelegate {
 
         let hasWheelRevolution = (flags & 0x01) != 0
         let hasCrankRevolution = (flags & 0x02) != 0
+
+        // Update sensor capabilities based on what data it provides
+        var capability = sensorCapabilities[peripheral.identifier] ?? SensorCapability()
+        if hasWheelRevolution {
+            capability.providesSpeed = true
+        }
+        if hasCrankRevolution {
+            capability.providesCadence = true
+        }
+        sensorCapabilities[peripheral.identifier] = capability
+
+        // Update sensor type based on detected capability
+        let detectedType = capability.primaryType
+        if peripheralToTypeMap[peripheral.identifier] != detectedType {
+            peripheralToTypeMap[peripheral.identifier] = detectedType
+            // Update sensorInfo with refined type
+            if var sensorInfo = sensorInfoMap[peripheral.identifier] {
+                sensorInfo.type = detectedType
+                sensorInfoMap[peripheral.identifier] = sensorInfo
+                connectedSensors[peripheral.identifier] = sensorInfo
+                print("🔵 Refined sensor type: \(peripheral.name ?? "Unknown") -> \(detectedType.rawValue)")
+            }
+        }
 
         // Parse Wheel Revolution Data (Speed)
         if hasWheelRevolution && data.count >= offset + 6 {
@@ -483,6 +623,7 @@ extension BluetoothService: CBPeripheralDelegate {
             let speedMPH = speedMPS * 2.23694
 
             DispatchQueue.main.async {
+                self.lastSpeedValue = speedMPH
                 self.onSpeedUpdate?(speedMPH)
             }
         }
@@ -515,12 +656,18 @@ extension BluetoothService: CBPeripheralDelegate {
             let cadenceRPM = Double(revDelta) / timeInMinutes
 
             DispatchQueue.main.async {
+                self.lastCadenceValue = Int(cadenceRPM)
                 self.onCadenceUpdate?(Int(cadenceRPM))
             }
         }
     }
 
-    private func parseHeartRateMeasurement(data: Data) {
+    private func parseHeartRateMeasurement(data: Data, peripheral: CBPeripheral) {
+        // Update sensor capability
+        var capability = sensorCapabilities[peripheral.identifier] ?? SensorCapability()
+        capability.providesHeartRate = true
+        sensorCapabilities[peripheral.identifier] = capability
+
         guard data.count >= 2 else { return }
 
         // Debug: Print raw data
@@ -580,6 +727,7 @@ extension BluetoothService: CBPeripheralDelegate {
                 heartRateHistory.removeLast()
 
                 DispatchQueue.main.async {
+                    self.lastHeartRateValue = previousAverage
                     self.onHeartRateUpdate?(previousAverage)
                 }
                 return
@@ -587,16 +735,25 @@ extension BluetoothService: CBPeripheralDelegate {
         }
 
         DispatchQueue.main.async {
+            self.lastHeartRateValue = smoothedHeartRate
             self.onHeartRateUpdate?(smoothedHeartRate)
         }
     }
 
-    private func parsePowerMeasurement(data: Data) {
+    private func parsePowerMeasurement(data: Data, peripheral: CBPeripheral) {
+        // Update sensor capability
+        var capability = sensorCapabilities[peripheral.identifier] ?? SensorCapability()
+        capability.providesPower = true
+        sensorCapabilities[peripheral.identifier] = capability
+
         guard data.count >= 4 else { return }
 
         // Power is in bytes 2-3 as Int16 (watts)
         let power = Int(data[2]) | (Int(data[3]) << 8)
 
+        DispatchQueue.main.async {
+            self.lastPowerValue = power
+        }
         print("Power: \(power)W")
         // Add power callback if needed
     }
@@ -615,9 +772,7 @@ extension BluetoothService: CBPeripheralDelegate {
             sensorInfoMap[peripheral.identifier] = sensorInfo
 
             // Update in connected sensors
-            if let type = peripheralToTypeMap[peripheral.identifier] {
-                connectedSensors[type] = sensorInfo
-            }
+            connectedSensors[peripheral.identifier] = sensorInfo
 
             // Update in discovered sensors
             if let index = discoveredSensors.firstIndex(where: { $0.id == peripheral.identifier }) {

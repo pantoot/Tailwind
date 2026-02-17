@@ -27,6 +27,9 @@ struct Ride: Identifiable, Codable {
     let timeInZone: TimeInZone?
     let hrTSS: Double? // Heart Rate Training Stress Score
 
+    // Creatine analysis (nil for rides without power data)
+    let creatineMetrics: CreatineMetrics?
+
     // Codable wrapper for CLLocationCoordinate2D
     struct Coordinate: Codable {
         let latitude: Double
@@ -62,7 +65,8 @@ struct Ride: Identifiable, Codable {
          bikeName: String? = nil,
          bikeType: String? = nil,
          timeInZone: TimeInZone? = nil,
-         hrTSS: Double? = nil) {
+         hrTSS: Double? = nil,
+         creatineMetrics: CreatineMetrics? = nil) {
         self.id = id
         self.date = date
         self.duration = duration
@@ -79,6 +83,7 @@ struct Ride: Identifiable, Codable {
         self.bikeType = bikeType
         self.timeInZone = timeInZone
         self.hrTSS = hrTSS
+        self.creatineMetrics = creatineMetrics
     }
 
     // Formatted values
@@ -150,6 +155,14 @@ class RideHistory: ObservableObject {
         persistRides()
     }
 
+    // Clear all rides (for re-import with new settings)
+    func clearAllRides() {
+        let count = rides.count
+        rides.removeAll()
+        persistRides()
+        print("🗑️ Cleared all \(count) rides")
+    }
+
     // Update a specific ride (e.g., to fix calories)
     func updateRide(_ rideId: UUID, with updatedRide: Ride) {
         if let index = rides.firstIndex(where: { $0.id == rideId }) {
@@ -157,6 +170,78 @@ class RideHistory: ObservableObject {
             persistRides()
             print("✅ Updated ride: \(updatedRide.formattedDate)")
         }
+    }
+
+    // Sort rides by date (most recent first)
+    // Call this after bulk imports to ensure proper ordering
+    func sortByDate() {
+        rides.sort { $0.date > $1.date }
+        persistRides()
+    }
+
+    // Remove duplicate rides (same start time within 5 minutes and similar duration)
+    // Keeps the ride with the most complete data
+    func removeDuplicates() -> Int {
+        let originalCount = rides.count
+
+        // Group rides that are duplicates of each other
+        var groups: [[Ride]] = []
+
+        for ride in rides {
+            // Find if this ride belongs to an existing group
+            if let groupIndex = groups.firstIndex(where: { group in
+                group.contains { existing in
+                    abs(existing.date.timeIntervalSince(ride.date)) < 300 && // 5 minutes
+                    min(existing.duration, ride.duration) / max(existing.duration, ride.duration) > 0.9 // within 10%
+                }
+            }) {
+                groups[groupIndex].append(ride)
+            } else {
+                groups.append([ride])
+            }
+        }
+
+        // For each group, keep the ride with the most data
+        rides = groups.map { group in
+            if group.count == 1 {
+                return group[0]
+            }
+
+            // Score each ride by data completeness
+            let scored = group.map { ride -> (Ride, Int) in
+                var score = 0
+                if ride.averageHeartRate > 0 { score += 10 }
+                if ride.maxHeartRate > 0 { score += 5 }
+                if ride.hrTSS != nil { score += 20 }
+                if ride.timeInZone != nil { score += 15 }
+                if ride.calories > 0 { score += 10 }
+                if ride.routeCoordinates != nil && !ride.routeCoordinates!.isEmpty { score += 15 }
+                if ride.elevationGain != nil && ride.elevationGain! > 0 { score += 10 }
+                if ride.bikeName != nil { score += 5 }
+                if ride.notes != nil && !ride.notes!.isEmpty { score += 5 }
+                if ride.creatineMetrics != nil { score += 10 }
+                return (ride, score)
+            }
+
+            let best = scored.max(by: { $0.1 < $1.1 })!.0
+            let removed = group.filter { $0.id != best.id }
+            for r in removed {
+                print("🗑️ Removing duplicate: \(r.formattedDate) (\(String(format: "%.1f", r.distance)) mi)")
+            }
+            print("✅ Keeping best: \(best.formattedDate) (\(String(format: "%.1f", best.distance)) mi, HR:\(Int(best.averageHeartRate)), TSS:\(best.hrTSS.map { String(format: "%.0f", $0) } ?? "none"))")
+
+            return best
+        }
+
+        // Sort by date (most recent first)
+        rides.sort { $0.date > $1.date }
+
+        let removed = originalCount - rides.count
+        if removed > 0 {
+            persistRides()
+            print("📊 Removed \(removed) duplicate rides, kept \(rides.count)")
+        }
+        return removed
     }
 
     // Fix calories for a specific date's rides using correct formula (async version that updates HealthKit)
@@ -236,7 +321,8 @@ class RideHistory: ObservableObject {
                     bikeName: ride.bikeName,
                     bikeType: ride.bikeType,
                     timeInZone: ride.timeInZone,
-                    hrTSS: ride.hrTSS
+                    hrTSS: ride.hrTSS,
+                    creatineMetrics: ride.creatineMetrics
                 )
 
                 rides[i] = updatedRide

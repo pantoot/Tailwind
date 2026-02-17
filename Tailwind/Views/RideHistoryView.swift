@@ -163,6 +163,7 @@ struct RideHistoryView: View {
             }
             .sheet(item: $selectedRide) { ride in
                 RideDetailView(ride: ride)
+                    .environmentObject(healthKitService)
             }
             .sheet(isPresented: $showingDatePicker) {
                 DatePickerSheet(

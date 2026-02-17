@@ -120,8 +120,29 @@ class TrainingLoadManager: ObservableObject {
         loadData()
     }
 
+    // Rebuild TSS data from ride history (clears existing and rebuilds)
+    func syncFromRides(_ rides: [Ride]) {
+        print("🔄 Syncing TSS from \(rides.count) rides...")
+
+        // Clear existing data
+        dailyLoads.removeAll()
+
+        // Add TSS from each ride that has it
+        for ride in rides {
+            if let tss = ride.hrTSS {
+                addTSS(date: ride.date, tss: tss, persist: false)
+            }
+        }
+
+        // Save once at the end
+        saveData()
+
+        let metrics = calculateCurrentMetrics()
+        print("🔄 Sync complete: \(dailyLoads.count) days, CTL=\(String(format: "%.0f", metrics.ctl)), ATL=\(String(format: "%.0f", metrics.atl)), TSB=\(String(format: "%.0f", metrics.tsb))")
+    }
+
     // Add TSS for a ride
-    func addTSS(date: Date, tss: Double) {
+    func addTSS(date: Date, tss: Double, persist: Bool = true) {
         let normalizedDate = Calendar.current.startOfDay(for: date)
         let dateKey = DailyTrainingLoad(date: normalizedDate, tss: 0).dateKey
 
@@ -141,13 +162,40 @@ class TrainingLoadManager: ObservableObject {
             dailyLoads = Array(dailyLoads.prefix(maxDays))
         }
 
-        saveData()
+        if persist {
+            saveData()
+        }
     }
 
     // Calculate current performance metrics
     func calculateCurrentMetrics() -> PerformanceMetrics {
         let today = Calendar.current.startOfDay(for: Date())
         return calculateMetrics(asOf: today)
+    }
+
+    // Debug: Print all TSS data and calculation
+    func debugPrintMetrics() {
+        print("📊 === TRAINING LOAD DEBUG ===")
+        print("📊 Total days with TSS data: \(dailyLoads.count)")
+
+        let sortedLoads = dailyLoads.sorted { $0.date > $1.date }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+
+        print("📊 Recent TSS by day:")
+        for load in sortedLoads.prefix(14) {
+            print("   \(formatter.string(from: load.date)): \(String(format: "%.0f", load.tss)) TSS")
+        }
+
+        let metrics = calculateCurrentMetrics()
+        let weekly = getWeeklySummary()
+
+        print("📊 Weekly TSS: \(String(format: "%.0f", weekly.weekTSS))")
+        print("📊 CTL (Fitness/42-day): \(String(format: "%.1f", metrics.ctl))")
+        print("📊 ATL (Fatigue/7-day): \(String(format: "%.1f", metrics.atl))")
+        print("📊 TSB (Form): \(String(format: "%.1f", metrics.tsb))")
+        print("📊 Status: \(metrics.formStatus.rawValue)")
+        print("📊 ===========================")
     }
 
     // Calculate metrics as of a specific date
@@ -264,6 +312,13 @@ class TrainingLoadManager: ObservableObject {
             return
         }
         dailyLoads = decoded
+    }
+
+    // Clear all training load data (for re-import)
+    func clearAll() {
+        dailyLoads.removeAll()
+        saveData()
+        print("🗑️ Cleared all training load data")
     }
 
     private func saveData() {

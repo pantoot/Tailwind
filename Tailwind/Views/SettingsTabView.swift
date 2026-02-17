@@ -685,6 +685,23 @@ struct SensorSettingsSheet: View {
     @State private var assigningSensor: (SensorType, SensorInfo)?
     @State private var renamingSensor: (SensorType, String)? = nil
     @State private var showingRenameSheet = false
+    @State private var editingSensor: (sensorId: UUID, type: SensorType, customName: String?, isProfile: Bool)? = nil
+    @State private var showingSensorEditor = false
+    @State private var showingTypeSelection = false
+    @State private var pendingSensorAssignment: (SensorInfo, Bool)? = nil // (sensor, isProfile)
+
+    // Filter out sensors that are already assigned
+    var unassignedSensors: [SensorInfo] {
+        let assignedSensorIds = Set(
+            bikeStable.bikes.flatMap { bike in
+                bike.assignedSensors.values.map { $0.id }
+            } + bikeStable.profileSensors.values.map { $0.id }
+        )
+
+        return bluetoothService.discoveredSensors.filter { sensor in
+            !assignedSensorIds.contains(sensor.id.uuidString)
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -702,38 +719,40 @@ struct SensorSettingsSheet: View {
                 // Assigned Sensors
                 Section(header: Text("Assigned Sensors")) {
                     ForEach(SensorType.allCases, id: \.self) { sensorType in
-                        if let savedSensor = bikeStable.getSensor(for: sensorType) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(savedSensor.displayName)
-                                            .font(.headline)
-                                        Text(sensorType.rawValue)
+                        if let savedSensor = bikeStable.getSensor(for: sensorType),
+                           let sensorId = UUID(uuidString: savedSensor.id) {
+                            Button(action: {
+                                editingSensor = (sensorId: sensorId, type: sensorType, customName: savedSensor.customName, isProfile: sensorType.isProfileSensor)
+                                showingSensorEditor = true
+                            }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        VStack(alignment: .leading) {
+                                            Text(savedSensor.displayName)
+                                                .font(.headline)
+                                                .foregroundColor(.primary)
+                                            Text(sensorType.rawValue)
+                                                .font(.caption)
+                                                .foregroundColor(.gray)
+                                        }
+
+                                        Spacer()
+
+                                        Text(sensorType.isProfileSensor ? "Profile" : bikeStable.selectedBike?.name ?? "Bike")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color.blue.opacity(0.1))
+                                            .clipShape(Capsule())
+
+                                        Image(systemName: "chevron.right")
                                             .font(.caption)
                                             .foregroundColor(.gray)
                                     }
 
-                                    Spacer()
-
-                                    Text(sensorType.isProfileSensor ? "Profile" : bikeStable.selectedBike?.name ?? "Bike")
-                                        .font(.caption)
-                                        .foregroundColor(.blue)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.blue.opacity(0.1))
-                                        .clipShape(Capsule())
-
-                                    Button(action: {
-                                        renamingSensor = (sensorType, savedSensor.customName ?? savedSensor.deviceName)
-                                        showingRenameSheet = true
-                                    }) {
-                                        Image(systemName: "pencil.circle")
-                                            .foregroundColor(.blue)
-                                    }
-                                }
-
                                 HStack {
-                                    if bluetoothService.connectedSensors[sensorType] != nil {
+                                    if bluetoothService.isConnected(sensorType) {
                                         HStack(spacing: 8) {
                                             Text("✓ Connected")
                                                 .font(.caption)
@@ -762,17 +781,18 @@ struct SensorSettingsSheet: View {
                                     }
                                 }
                             }
+                            }
                         }
                     }
                 }
 
                 // Discovered Sensors
                 Section(header: Text("Discovered Sensors")) {
-                    if bluetoothService.discoveredSensors.isEmpty {
-                        Text("No sensors found")
+                    if unassignedSensors.isEmpty {
+                        Text("No unassigned sensors found")
                             .foregroundColor(.gray)
                     } else {
-                        ForEach(bluetoothService.discoveredSensors) { sensor in
+                        ForEach(unassignedSensors) { sensor in
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(sensor.name)
@@ -799,7 +819,13 @@ struct SensorSettingsSheet: View {
 
                                 if sensor.isConnected {
                                     Button("Assign") {
-                                        assigningSensor = (sensor.type, sensor)
+                                        // For CSC sensors (Speed/Cadence), ask user to choose type
+                                        if sensor.type == .speed || sensor.type == .cadence {
+                                            pendingSensorAssignment = (sensor, false)
+                                            showingTypeSelection = true
+                                        } else {
+                                            assigningSensor = (sensor.type, sensor)
+                                        }
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .font(.caption)
@@ -838,28 +864,83 @@ struct SensorSettingsSheet: View {
             }
             .alert("Assign Sensor", isPresented: .constant(assigningSensor != nil), presenting: assigningSensor) { sensorTuple in
                 Button("Assign to Profile") {
-                    if let savedSensor = bluetoothService.createSavedSensor(for: sensorTuple.0) {
-                        bikeStable.assignProfileSensor(savedSensor, type: sensorTuple.0)
-                    }
+                    let savedSensor = SavedSensor(
+                        id: sensorTuple.1.id.uuidString,
+                        customName: nil,
+                        type: sensorTuple.1.type,
+                        deviceName: sensorTuple.1.name
+                    )
+                    bikeStable.assignProfileSensor(savedSensor, type: sensorTuple.1.type)
                     assigningSensor = nil
                 }
                 Button("Assign to \(bikeStable.selectedBike?.name ?? "Current Bike")") {
-                    if let savedSensor = bluetoothService.createSavedSensor(for: sensorTuple.0) {
-                        bikeStable.assignSensorToBike(savedSensor, type: sensorTuple.0)
-                    }
+                    let savedSensor = SavedSensor(
+                        id: sensorTuple.1.id.uuidString,
+                        customName: nil,
+                        type: sensorTuple.1.type,
+                        deviceName: sensorTuple.1.name
+                    )
+                    bikeStable.assignSensorToBike(savedSensor, type: sensorTuple.1.type)
                     assigningSensor = nil
                 }
                 Button("Cancel", role: .cancel) {
                     assigningSensor = nil
                 }
             } message: { sensorTuple in
-                Text("\(sensorTuple.0.rawValue) will auto-connect to the selected bike or profile.")
+                Text("\(sensorTuple.1.name) will auto-connect to the selected bike or profile.")
             }
             .sheet(isPresented: $showingRenameSheet) {
                 if let (sensorType, initialName) = renamingSensor {
                     SensorRenameView(sensorType: sensorType, initialName: initialName)
                         .environmentObject(bikeStable)
                 }
+            }
+            .sheet(isPresented: $showingSensorEditor) {
+                if let editing = editingSensor {
+                    SensorEditorView(
+                        sensorId: editing.sensorId,
+                        currentType: editing.type,
+                        customName: editing.customName,
+                        isProfileSensor: editing.isProfile
+                    )
+                    .environmentObject(bluetoothService)
+                    .environmentObject(bikeStable)
+                }
+            }
+            .alert("Select Sensor Type", isPresented: $showingTypeSelection, presenting: pendingSensorAssignment) { pending in
+                Button("Speed Sensor") {
+                    let savedSensor = SavedSensor(
+                        id: pending.0.id.uuidString,
+                        customName: nil,
+                        type: .speed,
+                        deviceName: pending.0.name
+                    )
+                    if pending.1 {
+                        bikeStable.assignProfileSensor(savedSensor, type: .speed)
+                    } else {
+                        bikeStable.assignSensorToBike(savedSensor, type: .speed)
+                    }
+                    pendingSensorAssignment = nil
+                }
+                Button("Cadence Sensor") {
+                    let savedSensor = SavedSensor(
+                        id: pending.0.id.uuidString,
+                        customName: nil,
+                        type: .cadence,
+                        deviceName: pending.0.name
+                    )
+                    if pending.1 {
+                        bikeStable.assignProfileSensor(savedSensor, type: .cadence)
+                    } else {
+                        bikeStable.assignSensorToBike(savedSensor, type: .cadence)
+                    }
+                    pendingSensorAssignment = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingSensorAssignment = nil
+                }
+            } message: { pending in
+                Text("This is a combined Speed/Cadence sensor. Choose which data you want to use from \(pending.0.name).")
             }
         }
     }

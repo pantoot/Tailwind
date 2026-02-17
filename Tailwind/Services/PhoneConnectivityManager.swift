@@ -184,9 +184,13 @@ extension PhoneConnectivityManager: WCSessionDelegate {
 
                 switch action {
                 case "startRide":
-                    self.onStartRide?()
+                    // Toggle the published property to trigger MainView onChange
+                    self.watchRequestsStartRide.toggle()
+                    self.onStartRide?() // Keep for backward compatibility
                 case "stopRide":
-                    self.onStopRide?()
+                    // Toggle the published property to trigger MainView onChange
+                    self.watchRequestsStopRide.toggle()
+                    self.onStopRide?() // Keep for backward compatibility
                 case "toggleAudio":
                     self.onToggleAudio?()
                 default:

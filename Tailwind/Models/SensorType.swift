@@ -33,7 +33,7 @@ enum SensorType: String, CaseIterable, Codable {
 struct SensorInfo: Identifiable {
     let id: UUID
     let name: String
-    let type: SensorType
+    var type: SensorType // Changed to var - can be refined when we detect capabilities
     let rssi: Int
     var isConnected: Bool = false
     var batteryLevel: Int? = nil // Battery percentage (0-100)

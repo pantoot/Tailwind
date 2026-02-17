@@ -1,0 +1,15 @@
+{
+  "originHash" : "0d1cba7c5269aa48f2260c385a9b7abfdc4a9bbf46227f4f94dcb7c44139aa1d",
+  "pins" : [
+    {
+      "identity" : "fitfileparser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/roznet/FitFileParser",
+      "state" : {
+        "revision" : "afcdf1677d89819f305f7714bb3b6a18dca05cc6",
+        "version" : "1.5.2"
+      }
+    }
+  ],
+  "version" : 3
+}

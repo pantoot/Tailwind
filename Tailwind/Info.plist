@@ -14,5 +14,67 @@
 	<string>DesertMetrics needs background location access to track your ride when the phone is locked or you're using other apps.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>DesertMetrics needs Bluetooth access to connect to your cycling sensors (speed, cadence, heart rate) even when the app is in the background or phone is locked, ensuring continuous tracking of your ride metrics.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Tailwind reads your health data to display workout history and sync with Apple Health.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Tailwind saves your imported cycling workouts and heart rate data to Apple Health.</string>
+
+	<!-- URL Scheme for share extension to open main app -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.rick.Tailwind</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tailwind</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+
+	<!-- Document types - register as able to open FIT files -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>FIT File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.garmin.fit</string>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Import FIT file type declaration -->
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.garmin.fit</string>
+			<key>UTTypeDescription</key>
+			<string>FIT Activity File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>fit</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/vnd.ant.fit</string>
+			</dict>
+		</dict>
+	</array>
 </dict>
 </plist>

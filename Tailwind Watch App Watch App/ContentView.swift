@@ -6,105 +6,157 @@ struct ContentView: View {
     @EnvironmentObject var healthKit: WatchHealthKitService
     @State private var isRecording = false
 
+    // Dynamic speed color based on value
+    private var speedColor: Color {
+        let speed = connectivity.currentSpeed
+        switch speed {
+        case 0..<5: return .gray
+        case 5..<10: return .yellow
+        case 10..<15: return .green
+        case 15..<20: return .cyan
+        default: return .mint // Super fast!
+        }
+    }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 8) {
-                // Speed - Primary metric (large)
-                VStack(spacing: 2) {
-                    Text(String(format: "%.1f", connectivity.currentSpeed))
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .foregroundColor(.cyan)
-                    Text("MPH")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.gray)
-                }
-                .padding(.bottom, 8)
+            VStack(spacing: 10) {
+                // Speed - Hero display with glow effect
+                ZStack {
+                    // Subtle glow
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [speedColor.opacity(0.4), Color.clear],
+                                center: .center,
+                                startRadius: 5,
+                                endRadius: 60
+                            )
+                        )
+                        .frame(width: 120, height: 120)
+                        .blur(radius: 20)
 
-                // Distance and Duration (medium)
-                HStack(spacing: 12) {
-                    VStack(spacing: 2) {
-                        Text(String(format: "%.2f", connectivity.distance))
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundColor(.green)
-                        Text("MILES")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.gray)
+                    VStack(spacing: 3) {
+                        Text(String(format: "%.1f", connectivity.currentSpeed))
+                            .font(.system(size: 52, weight: .bold, design: .rounded))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [speedColor, speedColor.opacity(0.7)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                        Text("MPH")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white.opacity(0.5))
+                            .tracking(2)
                     }
+                }
+                .padding(.bottom, 6)
 
-                    VStack(spacing: 2) {
-                        Text(formatDuration(connectivity.duration))
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundColor(.orange)
-                        Text("TIME")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.gray)
-                    }
+                // Distance and Duration - Modern glassmorphism cards
+                HStack(spacing: 8) {
+                    WatchMetricCard(
+                        value: String(format: "%.2f", connectivity.distance),
+                        label: "MI",
+                        color: .blue
+                    )
+
+                    WatchMetricCard(
+                        value: formatDuration(connectivity.duration),
+                        label: "TIME",
+                        color: .orange
+                    )
                 }
 
-                // Heart Rate (if available)
+                // Heart Rate (if available) - Modern card
                 if connectivity.heartRate > 0 {
-                    VStack(spacing: 2) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "heart.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.red)
-                            Text("\(connectivity.heartRate)")
-                                .font(.system(size: 20, weight: .bold, design: .rounded))
-                                .foregroundColor(.red)
-                        }
-                        Text("BPM")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.gray)
-                    }
-                    .padding(.top, 4)
+                    WatchMetricCard(
+                        value: "\(connectivity.heartRate)",
+                        label: "BPM",
+                        color: .red,
+                        icon: "heart.fill"
+                    )
                 }
 
-                // Segment indicator (if active)
+                // Segment indicator (if active) - Glassmorphism style
                 if let segmentName = connectivity.activeSegmentName {
                     VStack(spacing: 4) {
                         HStack(spacing: 4) {
                             Image(systemName: "flag.fill")
-                                .font(.system(size: 10))
+                                .font(.system(size: 11, weight: .bold))
                             Text(segmentName)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: 12, weight: .bold))
                         }
                         .foregroundColor(.purple)
 
                         if let delta = connectivity.segmentDelta {
                             Text(formatDelta(delta))
-                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .font(.system(size: 15, weight: .bold, design: .monospaced))
                                 .foregroundColor(delta < 0 ? .green : .red)
                         }
                     }
-                    .padding(8)
-                    .background(Color.purple.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding(.top, 4)
+                    .frame(maxWidth: .infinity)
+                    .padding(10)
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(.ultraThinMaterial)
+
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.purple.opacity(0.3))
+                        }
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.purple.opacity(0.5), lineWidth: 1)
+                    )
                 }
 
-                // Start/Stop button
+                // Start/Stop button - Modern glassmorphism
                 Button(action: {
+                    // Send command to iPhone - don't change local state yet
+                    // State will update when iPhone confirms via connectivity.isRecording
                     if isRecording {
                         connectivity.sendStopRide()
-                        isRecording = false
                     } else {
                         connectivity.sendStartRide()
-                        isRecording = true
                     }
                 }) {
-                    HStack {
+                    HStack(spacing: 6) {
                         Image(systemName: isRecording ? "stop.fill" : "play.fill")
+                            .font(.system(size: 16, weight: .bold))
                         Text(isRecording ? "Stop" : "Start")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 17, weight: .bold))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(isRecording ? Color.red : Color.green)
+                    .padding(.vertical, 14)
+                    .background(
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(.ultraThinMaterial)
+
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(
+                                    LinearGradient(
+                                        colors: isRecording ?
+                                            [Color.red.opacity(0.8), Color.red.opacity(0.6)] :
+                                            [Color.green.opacity(0.8), Color.green.opacity(0.6)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        }
+                    )
                     .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
+                    )
                 }
                 .buttonStyle(.plain)
-                .padding(.top, 8)
+                .padding(.top, 6)
             }
             .padding()
         }
@@ -160,7 +212,86 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Watch Metric Card (Glassmorphism)
+struct WatchMetricCard: View {
+    let value: String
+    let label: String
+    let color: Color
+    var icon: String? = nil
+
+    var body: some View {
+        VStack(spacing: 6) {
+            // Icon if provided
+            if let icon = icon {
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.3))
+                        .frame(width: 20, height: 20)
+                        .blur(radius: 4)
+
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(color)
+                }
+            }
+
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color, color.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Text(label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.white.opacity(0.5))
+                .tracking(1)
+                .textCase(.uppercase)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .background(
+            ZStack {
+                // Glassmorphism base
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+
+                // Gradient overlay
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.15),
+                                Color.white.opacity(0.05)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(
+                    LinearGradient(
+                        colors: [color.opacity(0.6), color.opacity(0.3)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        )
+    }
+}
+
 #Preview {
     ContentView()
         .environmentObject(WatchConnectivityManager())
+        .environmentObject(WatchHealthKitService())
 }

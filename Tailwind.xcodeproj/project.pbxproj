@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		1D9135112EBE4C330025E65D /* Tailwind Watch App Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 1D9135072EBE4C320025E65D /* Tailwind Watch App Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1DF6450B2EDC85D600771D5B /* TailwindShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1DF645012EDC85D600771D5B /* TailwindShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1DF645172EDC8D3900771D5B /* FitFileParser in Frameworks */ = {isa = PBXBuildFile; productRef = 1DF645162EDC8D3900771D5B /* FitFileParser */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -17,6 +19,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 1D9135062EBE4C320025E65D;
 			remoteInfo = "Tailwind Watch App Watch App";
+		};
+		1DF645092EDC85D600771D5B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1D2AA3E02EBD22A1002EB686 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1DF645002EDC85D600771D5B;
+			remoteInfo = TailwindShareExtension;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -32,11 +41,23 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1DF645102EDC85D600771D5B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				1DF6450B2EDC85D600771D5B /* TailwindShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		1D2AA3E82EBD22A1002EB686 /* Tailwind.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tailwind.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1D9135072EBE4C320025E65D /* Tailwind Watch App Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Tailwind Watch App Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		1DF645012EDC85D600771D5B /* TailwindShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TailwindShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -46,6 +67,13 @@
 				Info.plist,
 			);
 			target = 1D2AA3E72EBD22A1002EB686 /* Tailwind */;
+		};
+		1DF6450F2EDC85D600771D5B /* Exceptions for "TailwindShareExtension" folder in "TailwindShareExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 1DF645002EDC85D600771D5B /* TailwindShareExtension */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -63,6 +91,14 @@
 			path = "Tailwind Watch App Watch App";
 			sourceTree = "<group>";
 		};
+		1DF645022EDC85D600771D5B /* TailwindShareExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1DF6450F2EDC85D600771D5B /* Exceptions for "TailwindShareExtension" folder in "TailwindShareExtension" target */,
+			);
+			path = TailwindShareExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,10 +106,18 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1DF645172EDC8D3900771D5B /* FitFileParser in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		1D9135042EBE4C320025E65D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1DF644FE2EDC85D600771D5B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -88,6 +132,8 @@
 			children = (
 				1D2AA3EA2EBD22A1002EB686 /* Tailwind */,
 				1D9135082EBE4C320025E65D /* Tailwind Watch App Watch App */,
+				1DF645022EDC85D600771D5B /* TailwindShareExtension */,
+				1DF645152EDC8D3900771D5B /* Frameworks */,
 				1D2AA3E92EBD22A1002EB686 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -97,8 +143,16 @@
 			children = (
 				1D2AA3E82EBD22A1002EB686 /* Tailwind.app */,
 				1D9135072EBE4C320025E65D /* Tailwind Watch App Watch App.app */,
+				1DF645012EDC85D600771D5B /* TailwindShareExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		1DF645152EDC8D3900771D5B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -112,17 +166,20 @@
 				1D2AA3E52EBD22A1002EB686 /* Frameworks */,
 				1D2AA3E62EBD22A1002EB686 /* Resources */,
 				1D9135152EBE4C330025E65D /* Embed Watch Content */,
+				1DF645102EDC85D600771D5B /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				1D9135102EBE4C330025E65D /* PBXTargetDependency */,
+				1DF6450A2EDC85D600771D5B /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				1D2AA3EA2EBD22A1002EB686 /* Tailwind */,
 			);
 			name = Tailwind;
 			packageProductDependencies = (
+				1DF645162EDC8D3900771D5B /* FitFileParser */,
 			);
 			productName = Tailwind;
 			productReference = 1D2AA3E82EBD22A1002EB686 /* Tailwind.app */;
@@ -150,6 +207,28 @@
 			productReference = 1D9135072EBE4C320025E65D /* Tailwind Watch App Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		1DF645002EDC85D600771D5B /* TailwindShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1DF6450C2EDC85D600771D5B /* Build configuration list for PBXNativeTarget "TailwindShareExtension" */;
+			buildPhases = (
+				1DF644FD2EDC85D600771D5B /* Sources */,
+				1DF644FE2EDC85D600771D5B /* Frameworks */,
+				1DF644FF2EDC85D600771D5B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				1DF645022EDC85D600771D5B /* TailwindShareExtension */,
+			);
+			name = TailwindShareExtension;
+			packageProductDependencies = (
+			);
+			productName = TailwindShareExtension;
+			productReference = 1DF645012EDC85D600771D5B /* TailwindShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -158,13 +237,16 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2610;
-				LastUpgradeCheck = 2610;
+				LastUpgradeCheck = 2620;
 				TargetAttributes = {
 					1D2AA3E72EBD22A1002EB686 = {
 						CreatedOnToolsVersion = 26.1;
 					};
 					1D9135062EBE4C320025E65D = {
 						CreatedOnToolsVersion = 26.1;
+					};
+					1DF645002EDC85D600771D5B = {
+						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
 			};
@@ -177,6 +259,9 @@
 			);
 			mainGroup = 1D2AA3DF2EBD22A1002EB686;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1DF644FC2EDC812A00771D5B /* XCRemoteSwiftPackageReference "FitFileParser" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1D2AA3E92EBD22A1002EB686 /* Products */;
 			projectDirPath = "";
@@ -184,6 +269,7 @@
 			targets = (
 				1D2AA3E72EBD22A1002EB686 /* Tailwind */,
 				1D9135062EBE4C320025E65D /* Tailwind Watch App Watch App */,
+				1DF645002EDC85D600771D5B /* TailwindShareExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -197,6 +283,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		1D9135052EBE4C320025E65D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1DF644FF2EDC85D600771D5B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -220,6 +313,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1DF644FD2EDC85D600771D5B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -227,6 +327,11 @@
 			isa = PBXTargetDependency;
 			target = 1D9135062EBE4C320025E65D /* Tailwind Watch App Watch App */;
 			targetProxy = 1D91350F2EBE4C330025E65D /* PBXContainerItemProxy */;
+		};
+		1DF6450A2EDC85D600771D5B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1DF645002EDC85D600771D5B /* TailwindShareExtension */;
+			targetProxy = 1DF645092EDC85D600771D5B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -290,6 +395,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -347,6 +453,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -358,9 +465,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tailwind/Tailwind.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = NJCPJJ422D;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Tailwind/Info.plist;
@@ -381,9 +489,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -400,9 +509,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Tailwind/Tailwind.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = NJCPJJ422D;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Tailwind/Info.plist;
@@ -423,9 +533,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -444,7 +555,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Tailwind Watch App Watch App/Tailwind Watch App Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = NJCPJJ422D;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tailwind Watch App";
@@ -456,7 +567,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -480,7 +591,7 @@
 				CODE_SIGN_ENTITLEMENTS = "Tailwind Watch App Watch App/Tailwind Watch App Watch App.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = NJCPJJ422D;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Tailwind Watch App";
@@ -492,7 +603,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -505,6 +616,64 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
 				WATCHOS_DEPLOYMENT_TARGET = 26.1;
+			};
+			name = Release;
+		};
+		1DF6450D2EDC85D600771D5B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TailwindShareExtension/TailwindShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TailwindShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TailwindShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind.TailwindShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1DF6450E2EDC85D600771D5B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TailwindShareExtension/TailwindShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5FT5WVH53K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TailwindShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TailwindShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rick.Tailwind.TailwindShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -538,7 +707,35 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		1DF6450C2EDC85D600771D5B /* Build configuration list for PBXNativeTarget "TailwindShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1DF6450D2EDC85D600771D5B /* Debug */,
+				1DF6450E2EDC85D600771D5B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1DF644FC2EDC812A00771D5B /* XCRemoteSwiftPackageReference "FitFileParser" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/roznet/FitFileParser";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1DF645162EDC8D3900771D5B /* FitFileParser */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1DF644FC2EDC812A00771D5B /* XCRemoteSwiftPackageReference "FitFileParser" */;
+			productName = FitFileParser;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 1D2AA3E02EBD22A1002EB686 /* Project object */;
 }

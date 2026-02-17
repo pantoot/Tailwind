@@ -5,57 +5,142 @@ import CoreLocation
 @main
 struct TailwindApp: App {
     @StateObject private var services = AppServices()
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Track if we're handling a URL import (prevents race with pending imports)
+    @State private var isHandlingURLImport = false
 
     var body: some Scene {
         WindowGroup {
-            ImportView()
+            TabView {
+                ImportView()
+                    .tabItem { Label("Dashboard", systemImage: "chart.bar.fill") }
+
+                CreatineFocusView()
+                    .tabItem { Label("Creatine", systemImage: "bolt.fill") }
+            }
                 .environmentObject(services.fitImportService)
                 .environmentObject(services.rideHistory)
                 .environmentObject(services.healthKitService)
+                .environmentObject(services.trainingLoadManager)
+                .environmentObject(services.weightLogManager)
+                .environmentObject(services.creatineSettingsManager)
                 .onOpenURL { url in
+                    isHandlingURLImport = true
                     handleIncomingURL(url)
                 }
                 .onAppear {
-                    processPendingImports()
+                    // Delay to allow URL handler to fire first if app opened via URL
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if !isHandlingURLImport {
+                            processPendingImports()
+                        }
+                    }
+                }
+                .onChange(of: scenePhase) { oldPhase, newPhase in
+                    if newPhase == .active && oldPhase == .background {
+                        print("📱 App became active from background")
+                        // Delay to allow URL handler to fire first
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            if !isHandlingURLImport {
+                                processPendingImports()
+                            }
+                            isHandlingURLImport = false  // Reset for next time
+                        }
+                    }
                 }
         }
     }
 
     /// Handle URLs from share extension or other apps
     private func handleIncomingURL(_ url: URL) {
+        print("📥 Received URL: \(url)")
+        print("📥 Scheme: \(url.scheme ?? "nil"), Host: \(url.host ?? "nil")")
+
         // Handle tailwind:// URL scheme
         if url.scheme == "tailwind" && url.host == "import" {
+            print("📥 Processing tailwind://import URL")
             if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
                let fileParam = components.queryItems?.first(where: { $0.name == "file" })?.value,
                let filePath = fileParam.removingPercentEncoding {
                 let fileURL = URL(fileURLWithPath: filePath)
+                print("📥 File path: \(filePath)")
+                print("📥 File exists: \(FileManager.default.fileExists(atPath: filePath))")
+
+                // Clear this file from pending imports to prevent double-import
+                clearPendingImport(path: filePath)
+
                 Task {
                     do {
-                        _ = try await services.fitImportService.importFITFile(from: fileURL)
+                        let ride = try await services.fitImportService.importFITFile(from: fileURL)
+                        print("✅ Successfully imported ride: \(ride.formattedDate), \(ride.formattedDistance)")
+
+                        // Update training load stats
+                        if let tss = ride.hrTSS {
+                            await MainActor.run {
+                                services.trainingLoadManager.addTSS(date: ride.date, tss: tss)
+                            }
+                            print("📊 Added TSS: \(String(format: "%.0f", tss))")
+                        }
+
                         // Clean up the temp file after import
                         try? FileManager.default.removeItem(at: fileURL)
                     } catch {
-                        print("Failed to import from URL: \(error)")
+                        print("❌ Failed to import from URL: \(error)")
                     }
                 }
+            } else {
+                print("❌ Could not parse file parameter from URL")
             }
         }
         // Handle direct FIT file opens
         else if url.pathExtension.lowercased() == "fit" {
+            print("📥 Processing direct FIT file: \(url.path)")
             Task {
                 do {
-                    _ = try await services.fitImportService.importFITFile(from: url)
+                    let ride = try await services.fitImportService.importFITFile(from: url)
+                    print("✅ Successfully imported ride: \(ride.formattedDate), \(ride.formattedDistance)")
+
+                    // Update training load stats
+                    if let tss = ride.hrTSS {
+                        await MainActor.run {
+                            services.trainingLoadManager.addTSS(date: ride.date, tss: tss)
+                        }
+                        print("📊 Added TSS: \(String(format: "%.0f", tss))")
+                    }
                 } catch {
-                    print("Failed to import FIT file: \(error)")
+                    print("❌ Failed to import FIT file: \(error)")
                 }
             }
+        } else {
+            print("⚠️ Unhandled URL scheme/type")
+        }
+    }
+
+    /// Remove a specific file from pending imports (to prevent double-import)
+    private func clearPendingImport(path: String) {
+        guard let defaults = UserDefaults(suiteName: "group.com.rick.Tailwind") else { return }
+        var pending = defaults.stringArray(forKey: "pendingFITImports") ?? []
+        if let index = pending.firstIndex(of: path) {
+            pending.remove(at: index)
+            defaults.set(pending, forKey: "pendingFITImports")
+            print("📥 Cleared \(path) from pending imports")
         }
     }
 
     /// Process any FIT files shared via the extension while app was closed
     private func processPendingImports() {
-        guard let defaults = UserDefaults(suiteName: "group.com.tailwind.app") else { return }
-        guard let pendingPaths = defaults.stringArray(forKey: "pendingFITImports"), !pendingPaths.isEmpty else { return }
+        print("📋 Checking for pending imports...")
+        guard let defaults = UserDefaults(suiteName: "group.com.rick.Tailwind") else {
+            print("❌ Could not access App Group defaults")
+            return
+        }
+        guard let pendingPaths = defaults.stringArray(forKey: "pendingFITImports"), !pendingPaths.isEmpty else {
+            print("📋 No pending imports found")
+            return
+        }
+
+        print("📋 Found \(pendingPaths.count) pending imports: \(pendingPaths)")
 
         // Clear the pending list
         defaults.removeObject(forKey: "pendingFITImports")
@@ -64,15 +149,30 @@ struct TailwindApp: App {
         Task {
             for path in pendingPaths {
                 let url = URL(fileURLWithPath: path)
-                guard FileManager.default.fileExists(atPath: path) else { continue }
+                print("📋 Processing: \(path)")
+                print("📋 File exists: \(FileManager.default.fileExists(atPath: path))")
+
+                guard FileManager.default.fileExists(atPath: path) else {
+                    print("⚠️ File not found, skipping: \(path)")
+                    continue
+                }
 
                 do {
-                    _ = try await services.fitImportService.importFITFile(from: url)
+                    let ride = try await services.fitImportService.importFITFile(from: url)
+
+                    // Update training load stats
+                    if let tss = ride.hrTSS {
+                        await MainActor.run {
+                            services.trainingLoadManager.addTSS(date: ride.date, tss: tss)
+                        }
+                        print("📊 Added TSS: \(String(format: "%.0f", tss))")
+                    }
+
                     // Clean up after successful import
                     try? FileManager.default.removeItem(at: url)
-                    print("Processed pending import: \(url.lastPathComponent)")
+                    print("✅ Processed pending import: \(ride.formattedDate), \(ride.formattedDistance)")
                 } catch {
-                    print("Failed pending import: \(error)")
+                    print("❌ Failed pending import: \(error)")
                 }
             }
         }
@@ -84,11 +184,17 @@ class AppServices: ObservableObject {
     let rideHistory: RideHistory
     let healthKitService: HealthKitService
     let fitImportService: FITImportService
+    let trainingLoadManager: TrainingLoadManager
+    let weightLogManager: WeightLogManager
+    let creatineSettingsManager: CreatineSettingsManager
 
     init() {
         // Initialize core services
         self.rideHistory = RideHistory()
         self.healthKitService = HealthKitService()
+        self.trainingLoadManager = TrainingLoadManager()
+        self.weightLogManager = WeightLogManager()
+        self.creatineSettingsManager = CreatineSettingsManager()
 
         // FIT import service depends on HealthKit and RideHistory
         self.fitImportService = FITImportService(
@@ -97,6 +203,27 @@ class AppServices: ObservableObject {
         )
 
         print("🚀 Tailwind initialized - FIT Import Mode")
+
+        // Clean up duplicates
+        let removed = rideHistory.removeDuplicates()
+        if removed > 0 {
+            print("🧹 Removed \(removed) duplicate ride(s)")
+        }
+
+        // Sync TSS data from rides to training load manager
+        trainingLoadManager.syncFromRides(rideHistory.rides)
+
+        // Debug: Print rides and training load calculation
+        print("🚴 === RIDES DEBUG ===")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, h:mm a"
+        for ride in rideHistory.rides.prefix(10) {
+            let tssStr = ride.hrTSS.map { String(format: "%.0f TSS", $0) } ?? "no TSS"
+            print("   \(formatter.string(from: ride.date)): \(ride.formattedDistance), \(ride.formattedDuration), \(tssStr)")
+        }
+        print("🚴 ===================")
+
+        trainingLoadManager.debugPrintMetrics()
     }
 }
 
