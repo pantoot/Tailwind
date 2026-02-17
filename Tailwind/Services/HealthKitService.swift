@@ -22,7 +22,8 @@ class HealthKitService: ObservableObject {
         HKSeriesType.workoutRoute(),
         HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
-        HKObjectType.quantityType(forIdentifier: .heartRate)!
+        HKObjectType.quantityType(forIdentifier: .heartRate)!,
+        HKObjectType.quantityType(forIdentifier: .cyclingPower)!
     ]
 
     init() {
@@ -339,6 +340,26 @@ class HealthKitService: ObservableObject {
         let isIndoor = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool ?? false
         let workoutSource = isIndoor ? "Indoor Cycling" : "Apple Workouts"
 
+        // Fetch power and HR samples for creatine analysis (Peloton, Zwift, etc.)
+        let powerSamples = await fetchPowerSamples(for: workout)
+        let creatineMetrics: CreatineMetrics?
+        if !powerSamples.isEmpty {
+            let hrSamples = await fetchHeartRateSamplesForWorkout(workout)
+            // No speed data from indoor workouts, pass empty array
+            creatineMetrics = CreatineAnalysisService.analyze(
+                power: powerSamples,
+                heartRate: hrSamples,
+                speed: [],
+                rideStart: workout.startDate,
+                settings: CreatineSettings.load()
+            )
+            if let cm = creatineMetrics {
+                print("⚡ HealthKit power analysis: \(powerSamples.count) samples, 30s max=\(String(format: "%.0f", cm.max30sPower))W, \(cm.matchCount) matches")
+            }
+        } else {
+            creatineMetrics = nil
+        }
+
         let ride = Ride(
             id: UUID(),
             date: workout.startDate,
@@ -347,7 +368,7 @@ class HealthKitService: ObservableObject {
             averageSpeed: averageSpeed,
             maxSpeed: maxSpeed,
             averageHeartRate: heartRateData.average,
-            maxHeartRate: Int(heartRateData.max), // Convert Double to Int
+            maxHeartRate: Int(heartRateData.max),
             calories: calories,
             elevationGain: nil,
             routeCoordinates: routeCoordinates,
@@ -355,7 +376,8 @@ class HealthKitService: ObservableObject {
             bikeName: nil,
             bikeType: nil,
             timeInZone: nil,
-            hrTSS: hrTSS
+            hrTSS: hrTSS,
+            creatineMetrics: creatineMetrics
         )
 
         // Create a Tailwind workout with Active Energy for Move ring credit
@@ -571,6 +593,78 @@ class HealthKitService: ObservableObject {
             // "No data available for the specified predicate" is common for workouts without HR
             print("⚠️ No HR data for workout on \(workout.startDate): \(error.localizedDescription)")
             return (0, 0)
+        }
+    }
+
+    /// Fetch timestamped power samples for a workout (Peloton, Zwift, etc. write these to HealthKit)
+    private func fetchPowerSamples(for workout: HKWorkout) async -> [(date: Date, watts: Double)] {
+        let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower)!
+        let predicate = HKQuery.predicateForSamples(
+            withStart: workout.startDate,
+            end: workout.endDate,
+            options: .strictStartDate
+        )
+
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: powerType,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            let wattUnit = HKUnit.watt()
+            return samples.map { sample in
+                (date: sample.startDate, watts: sample.quantity.doubleValue(for: wattUnit))
+            }
+        } catch {
+            print("⚠️ No power data for workout: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Fetch timestamped HR samples for a workout (needed for creatine HR recovery analysis)
+    private func fetchHeartRateSamplesForWorkout(_ workout: HKWorkout) async -> [(date: Date, bpm: Double)] {
+        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let predicate = HKQuery.predicateForSamples(
+            withStart: workout.startDate,
+            end: workout.endDate,
+            options: .strictStartDate
+        )
+
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: hrType,
+                    predicate: predicate,
+                    limit: HKObjectQueryNoLimit,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+            return samples.map { sample in
+                (date: sample.startDate, bpm: sample.quantity.doubleValue(for: bpmUnit))
+            }
+        } catch {
+            print("⚠️ No HR samples for workout: \(error.localizedDescription)")
+            return []
         }
     }
 
