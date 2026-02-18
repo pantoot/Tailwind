@@ -7,6 +7,7 @@ struct UserProfile: Codable {
     var heightInches: Int? // Optional for BMI calculations later
     var lactateThresholdHR: Int? // LTHR for zone calculations
     var maxHeartRate: Int? // Max HR (optional - can be estimated)
+    var ftp: Int? // Functional Threshold Power in watts
 
     enum Gender: String, Codable, CaseIterable {
         case male = "Male"

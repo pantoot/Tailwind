@@ -30,7 +30,7 @@ struct CreatineAnalysisService {
         // Algorithm 1: Match detection
         let matches = detectMatches(
             smoothedPower: smoothedPower,
-            threshold: settings.matchThresholdWatts,
+            threshold: settings.effectiveMatchThreshold,
             rideStart: rideStart,
             baseTime: baseTime
         )

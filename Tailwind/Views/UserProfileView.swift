@@ -3,6 +3,7 @@ import SwiftUI
 struct UserProfileView: View {
     @EnvironmentObject var sensorDataService: SensorDataService
     @EnvironmentObject var healthKitService: HealthKitService
+    @EnvironmentObject var rideHistory: RideHistory
     @Environment(\.dismiss) var dismiss
     @State private var birthday: Date
     @State private var weight: Double
@@ -10,6 +11,7 @@ struct UserProfileView: View {
     @State private var lactateThresholdHR: String
     @State private var maxHeartRate: String
     @State private var showingSaveConfirmation = false
+    @State private var showingMaxHRAlert = false
 
     init() {
         let profile = UserProfile.load()
@@ -81,6 +83,36 @@ struct UserProfileView: View {
                         Text("\(220 - calculatedAge) bpm")
                             .foregroundColor(.gray)
                     }
+
+                    // Recorded max HR from ride history
+                    if let recordedMax = recordedMaxHR {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Recorded Max HR")
+                                Text("Highest seen across all rides")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text("\(recordedMax) bpm")
+                                .foregroundColor(recordedMax > (Int(maxHeartRate) ?? 0) ? .orange : .green)
+                                .fontWeight(.semibold)
+                            if recordedMax > (Int(maxHeartRate) ?? 0) {
+                                Button("Use") {
+                                    maxHeartRate = "\(recordedMax)"
+                                    showingMaxHRAlert = true
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .tint(.orange)
+                            }
+                        }
+                        .alert("Max HR Updated", isPresented: $showingMaxHRAlert) {
+                            Button("OK") {}
+                        } message: {
+                            Text("Max HR set to \(recordedMax) bpm based on your ride history. Save your profile to apply this change.")
+                        }
+                    }
                 }
 
                 Section(header: Text("About Training Zones")) {
@@ -94,7 +126,7 @@ struct UserProfileView: View {
                         Text("Max Heart Rate")
                             .font(.headline)
                             .padding(.top, 8)
-                        Text("Optional. If not provided, we'll estimate using the 220-age formula. Your actual max may vary.")
+                        Text("Optional. If not provided, we'll estimate using the 220-age formula. Your actual max may vary. Tailwind will show your highest recorded HR from rides and let you update your profile directly.")
                             .font(.caption)
                             .foregroundColor(.gray)
                     }
@@ -173,6 +205,12 @@ struct UserProfileView: View {
                 Text("Your profile has been updated. Calorie calculations will now use your information.")
             }
         }
+    }
+
+    /// Highest max heart rate recorded across all rides in history
+    private var recordedMaxHR: Int? {
+        let maxes = rideHistory.rides.map { $0.maxHeartRate }.filter { $0 > 100 }
+        return maxes.max()
     }
 
     private var calculatedAge: Int {

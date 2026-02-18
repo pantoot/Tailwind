@@ -318,6 +318,28 @@ struct HistoryTabView: View {
                 .background(Color(.systemBackground))
                 .cornerRadius(12)
             }
+
+            NavigationLink(destination: HRRecoveryTrendView()) {
+                HStack {
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(.red)
+                        .frame(width: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("HR Recovery Trend")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text("Cardiovascular fitness over time")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.gray)
+                }
+                .padding()
+                .background(Color(.systemBackground))
+                .cornerRadius(12)
+            }
         }
     }
 

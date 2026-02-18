@@ -10,6 +10,15 @@ struct CreatineSettings: Codable {
         self.matchThresholdWatts = matchThresholdWatts
     }
 
+    /// Effective match threshold: uses Zone 6 floor (120% FTP) if FTP is set, otherwise falls back to manual setting.
+    var effectiveMatchThreshold: Double {
+        let profile = UserProfile.load()
+        if let ftp = profile.ftp, ftp > 0 {
+            return Double(ftp) * 1.2  // Zone 6 = 120% FTP
+        }
+        return matchThresholdWatts
+    }
+
     private static let storageKey = "CreatineSettings"
 
     static func load() -> CreatineSettings {

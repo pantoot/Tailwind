@@ -4,372 +4,210 @@ This file provides guidance to Claude Code when working on the Tailwind cycling 
 
 ## Project Overview
 
-**Tailwind** is a native iOS cycling app with Apple Watch companion that tracks rides using Bluetooth sensors and GPS. Built with SwiftUI for iOS 18+ and watchOS.
+**Tailwind** is a native iOS cycling app that imports FIT files from Magene cycling computers and syncs cycling workouts from Apple Health (Peloton, Zwift, etc.) into a training analytics dashboard. Built with SwiftUI for iOS 18+.
 
 **Repository**: https://github.com/pantoot/Tailwind.git
-**Current Branch**: `feature/tab-based-architecture`
+**Current Branch**: `fit-import-pivot`
 **Language**: Swift (SwiftUI)
-**Platforms**: iOS 18+, watchOS
+**Platforms**: iOS 18+
+**Version**: 1.2
 
-## Current Status (November 11, 2025)
+## Current Status (February 2026)
 
-### ✅ Completed Features
+The app pivoted from live ride tracking to FIT file import + Apple Health sync. Legacy ride-tracking code (Bluetooth sensors, GPS, Watch companion) is preserved but commented out in `DesertMetricsApp.swift`.
 
-#### Core Ride Tracking
-- Real-time speed, distance, time, heart rate, calories
-- GPS route tracking with polyline visualization
-- Elevation gain tracking
-- Auto-pause when stopped (speed < 0.5 mph for 3 seconds)
-- Background audio keeps app alive when phone locked
-- Save rides to Apple Health (HealthKit integration)
+### App Architecture
 
-#### Sensor Support
-- Bluetooth sensor connectivity (speed, cadence, heart rate)
-- **Apple Watch heart rate streaming** (fallback when no Bluetooth HR)
-- **Priority system**: Bluetooth HR > Watch HR (5-second timeout)
-- Per-bike sensor assignment (power meter on MTB, cadence on road bike)
-- Profile sensors (heart rate follows user across bikes)
-- Battery level monitoring for sensors
+**Two-tab layout:**
+1. **Dashboard** (`ImportView`) — Training load metrics (CTL/ATL/TSB), form status, ramp rate warning, import button, recent rides
+2. **Creatine Focus** (`CreatineFocusView`) — Power analytics for creatine supplementation tracking
 
-#### Apple Watch Companion
-- **Remote control**: Start/Stop rides from watch
-- Real-time metrics display (speed, distance, time, HR)
-- Bi-directional sync via WatchConnectivity
-- Heart rate streaming to iPhone via HealthKit
-- Segment performance tracking on watch
+**Settings** accessible via gear icon in Dashboard toolbar.
 
-#### Bike Management
-- Multiple bike support with quick switcher
-- Bike-specific maintenance schedules:
-  - Intense 951 Gravel (31 items, Shimano GRX)
-  - Pivot Trail 429 Enduro Pro X0 (21 items, SRAM X0, FOX)
-  - Basic schedule for other bikes
-- Auto-detect schedule based on bike name/type
-- Track total miles per bike
-- Maintenance due/approaching indicators
+### Core Features
 
-#### Analytics & Training
-- Training Load Manager (CTL/ATL/TSB)
-- HR-based Training Stress Score (hrTSS)
-- Time in heart rate zones
-- Performance trends over time
-- Peak performance analysis
-- Route history map (all GPS rides overlaid)
+#### FIT File Import
+- Import via file picker, share extension (`TailwindShareExtension`), or direct file open
+- Share extension uses App Group (`group.com.rick.Tailwind`) to queue files
+- URL scheme: `tailwind://import?file=<path>`
+- Parses 1Hz record data: power, HR, speed, cadence, elevation, distance
+- Registered UTI: `com.garmin.fit` (FIT Activity File)
 
-#### UI/UX
-- Tab-based architecture: Ride / History / Settings
-- Portrait mode: 4 metrics (HR, Calories, Distance, Time)
-- Landscape mode: 2 layouts (simple/detailed) with swipe
-- Speed heatmap overlay on route
-- Mile markers on map
-- Route/Segment detection with live performance comparison
-- Dark theme optimized
+#### Apple Health Integration
+- Import cycling workouts from HealthKit (Peloton, Zwift, Apple Watch rides)
+- Reads: workouts, routes, heartRate, activeEnergyBurned, distanceCycling, cyclingPower, cyclingFunctionalThresholdPower
+- Writes: cycling workouts with HR samples, distance, calories, routes
+- Duplicate detection via time overlap analysis
 
-### 🔧 Technical Architecture
+#### Training Load Dashboard
+- **CTL** (Chronic Training Load / Fitness) — 42-day exponential average
+- **ATL** (Acute Training Load / Fatigue) — 7-day exponential average
+- **TSB** (Training Stress Balance / Form) — CTL minus ATL
+- **Ramp Rate Warning** — Red/green indicator when weekly CTL change > 5 (injury risk)
+- Form chart (30-day CTL/ATL/TSB history)
+- Weekly TSS summary
 
-#### App Structure
+#### Creatine Focus Analytics
+Analyzes raw 1Hz power/HR/speed data to track metrics affected by creatine supplementation:
+
+- **Matches Burned** — Hard anaerobic efforts above Zone 6 threshold (120% FTP). Bar chart per ride.
+- **Max 30s Power** — Best 30-second rolling average power per ride. Line chart trend.
+- **W/kg Delta** — Max 30s power divided by body weight. Requires weight log entries.
+- **HR Recovery** — Detects high HR → power drop → 60s measurement. Classifies coasting vs stopped.
+
+Filtering: Rides < 20 minutes excluded (cool downs/warm ups).
+Match threshold: Zone 6 floor (120% FTP) when FTP is set, otherwise manual watts setting.
+
+#### Power Analysis Pipeline
+```
+FIT File (1Hz records) ──► CreatineAnalysisService.analyze()
+                                │
+                           buildDenseArray() — interpolate sparse samples to 1s grid
+                           smooth3s() — centered 3-second moving average
+                           detectMatches() — contiguous periods above threshold >5s
+                           maxRollingAverage() — sliding 30s window maximum
+                           detectHRRecovery() — HR spike + power drop + 60s measurement
+                                │
+                           ──► CreatineMetrics struct (stored on Ride model)
+```
+
+#### LTHR Estimation
+- Scans last 90 days of cycling workouts from HealthKit
+- Finds best 20-minute rolling average HR using timestamp-based sliding window
+- Applies 2% discount for non-test field conditions
+- Deduplicates workouts by start time (HealthKit returns same ride from multiple sources)
+- Shows top 5 candidates with option to apply estimated LTHR
+
+#### User Profile
+- Birthday, weight, gender
+- LTHR (Lactate Threshold HR) — required for TSS/zone calculations
+- Max HR (optional, estimated from age if not set)
+- FTP (Functional Threshold Power) — used for power zone calculations and match threshold
+- Weight log for tracking W/kg over time
+
+### File Structure
 ```
 Tailwind/
 ├── Models/
-│   ├── Bike.swift              # Bike & BikeStable (sensor assignment)
-│   ├── MaintenanceItem.swift   # Maintenance schedules
-│   ├── Ride.swift              # Ride data model
-│   ├── SensorType.swift        # Bluetooth sensor types
-│   ├── TrainingLoad.swift      # CTL/ATL/TSB calculations
-│   └── UserProfile.swift       # User settings (LTHR, weight, age)
+│   ├── Ride.swift                # Ride data model (includes creatineMetrics)
+│   ├── CreatineMetrics.swift     # PowerMatch, HRRecoveryEvent structs
+│   ├── CreatineSettings.swift    # Match threshold, creatine start date, CreatineSettingsManager
+│   ├── WeightLog.swift           # WeightEntry, WeightLogManager
+│   ├── TrainingLoad.swift        # CTL/ATL/TSB, DailyTrainingLoad, ramp rate
+│   ├── UserProfile.swift         # User settings (LTHR, FTP, weight, age)
+│   ├── SensorType.swift          # Bluetooth sensor types (legacy)
+│   └── Bike.swift                # Bike & BikeStable (legacy)
 ├── Services/
-│   ├── BluetoothService.swift         # BLE sensor management
-│   ├── SensorDataService.swift        # Data aggregation & calculations
-│   ├── GPSService.swift               # Location tracking
-│   ├── HealthKitService.swift         # Apple Health integration
-│   ├── PhoneConnectivityManager.swift # iPhone ↔ Watch communication
-│   ├── BackgroundAudioService.swift   # Keep app alive when locked
-│   ├── RouteMatchingService.swift     # Detect known routes
-│   ├── SegmentManager.swift           # Strava-like segments
-│   └── AudioCueService.swift          # Voice announcements
+│   ├── FITImportService.swift         # FIT file parsing (FitFileParser), 1Hz capture
+│   ├── HealthKitService.swift         # Apple Health read/write, LTHR estimation, FTP fetch
+│   ├── CreatineAnalysisService.swift  # Power analysis algorithms (static methods)
+│   └── [legacy services...]           # Bluetooth, GPS, Audio, etc. (unused)
 ├── Views/
-│   ├── MainView.swift             # Main ride screen
-│   ├── HistoryTabView.swift       # Ride history & analytics
-│   ├── SettingsTabView.swift      # App settings
-│   ├── BikeManagementView.swift   # Bike CRUD & maintenance
-│   └── [other views...]
-└── DesertMetricsApp.swift         # App entry point & service wiring
+│   ├── ImportView.swift           # Dashboard + SettingsView + FormChart + LTHRResultView
+│   ├── CreatineFocusView.swift    # 4-widget power analytics + WeightQuickEntry
+│   ├── ImportSummaryView.swift    # Post-import summary with power highlights
+│   ├── RideDetailView.swift       # Individual ride detail + creatine metrics section
+│   ├── RideHistoryView.swift      # Full ride list
+│   ├── WeightLogView.swift        # Weight entry form + history
+│   └── SensorEditorView.swift     # Sensor management (legacy)
+├── DesertMetricsApp.swift         # App entry, TabView, AppServices, URL/share handling
+├── Info.plist                     # URL scheme, FIT UTI, document types
+└── Tailwind.entitlements          # App Group, HealthKit
 
-Tailwind Watch App Watch App/
-├── TailwindWatchApp.swift           # Watch app entry
-├── ContentView.swift                 # Watch UI
-├── WatchConnectivityManager.swift    # Watch ↔ iPhone communication
-└── WatchHealthKitService.swift       # HR streaming from watch
+TailwindShareExtension/
+├── ShareViewController.swift      # Receives FIT files via share sheet
+├── Info.plist                     # Extension activation rules
+└── TailwindShareExtension.entitlements
 ```
 
-#### Data Flow
-
-**Bluetooth Sensors → iPhone:**
-```
-BluetoothService (BLE)
-  → SensorDataService (aggregation)
-  → MainView (display)
-```
-
-**Apple Watch HR → iPhone:**
-```
-Watch HealthKit
-  → WatchHealthKitService (stream)
-  → WatchConnectivityManager (send)
-  → PhoneConnectivityManager (receive)
-  → SensorDataService.updateWatchHeartRate()
+### Service Container (AppServices)
+```swift
+class AppServices: ObservableObject {
+    let rideHistory: RideHistory
+    let healthKitService: HealthKitService
+    let fitImportService: FITImportService
+    let trainingLoadManager: TrainingLoadManager
+    let weightLogManager: WeightLogManager
+    let creatineSettingsManager: CreatineSettingsManager
+}
 ```
 
-**iPhone → Apple Watch:**
-```
-SensorDataService (ride data)
-  → MainView.sendWatchUpdate()
-  → PhoneConnectivityManager
-  → WatchConnectivityManager
-  → Watch ContentView (display)
-```
+All injected as `@EnvironmentObject` into views.
 
-**Watch Remote Control:**
-```
-Watch: Tap Start/Stop
-  → WatchConnectivityManager.sendStartRide()
-  → PhoneConnectivityManager.watchRequestsStartRide (toggle)
-  → MainView.onChange() observes
-  → MainView.handleStartStop()
-```
+### Data Persistence
+- **Rides**: UserDefaults (JSON-encoded `[Ride]`)
+- **Training loads**: UserDefaults key `"DailyTrainingLoads"`
+- **User profile**: UserDefaults key `"UserProfile"`
+- **Creatine settings**: UserDefaults key `"CreatineSettings"`
+- **Weight log**: UserDefaults key `"WeightLogEntries"`
+- **Share extension pending imports**: App Group UserDefaults key `"pendingFITImports"`
 
-#### Service Wiring (AppServices)
-All services initialized in `DesertMetricsApp.swift`:
-- Bluetooth callbacks → SensorDataService
-- GPS callbacks → RouteMatchingService & SegmentManager
-- Bike selection → Auto-connect sensors
-- Watch callbacks → Remote control triggers
-
-### 📋 Known Issues & TODO
-
-#### Configuration Needed (Manual Steps)
-- [ ] **Watch App**: Add HealthKit capability in Xcode
-  - Select "Tailwind Watch App Watch App" target
-  - Signing & Capabilities → + Capability → HealthKit
-  - Enable READ for Heart Rate
-- [ ] **Watch App**: Add privacy description
-  - Info tab → Add `Privacy - Health Share Usage Description`
-  - Value: "Tailwind needs access to your heart rate data from Apple Watch to track your cycling performance when a Bluetooth heart rate monitor is not available."
-- See `WATCH_HR_SETUP.md` for detailed instructions
-
-#### Priority Bugs
-- None currently identified
-
-#### Future Enhancements
-- Power meter support (watts, normalized power, TSS)
-- FTP testing protocol
-- Workout builder (intervals, custom workouts)
-- Strava sync
-- Garmin Connect IQ integration
-- Indoor trainer support (Zwift, TrainerRoad)
-
-### 🎯 Recent Work Session (Nov 11, 2025)
-
-1. **Added bike selector to main ride view**
-   - Tappable bike indicator in toolbar
-   - Quick sheet to switch bikes without navigating to Settings
-
-2. **Simplified portrait mode layout**
-   - Removed elevation metrics (still tracked in background)
-   - Single row: HR, Calories, Distance, Time
-   - Increased bottom padding (100px) to clear tab bar
-
-3. **Implemented Apple Watch HR streaming**
-   - WatchHealthKitService queries live HR from watch
-   - Sends to iPhone via WatchConnectivity
-   - Priority logic: Bluetooth HR > Watch HR (5s timeout)
-   - Fixed critical memory leak (limit=1, not unlimited)
-
-4. **Added watch remote control**
-   - Start/Stop rides from watch
-   - Guard checks prevent duplicate starts/stops
-   - Full bi-directional sync
-
-5. **Security audit**
-   - Verified no secrets/API keys in public GitHub repo
-   - All sensitive data stored locally (UserDefaults, HealthKit)
-   - No backend server, no authentication needed
+### Dependencies
+- **FitFileParser** — Swift package for parsing Garmin FIT files
+- **SwiftUI Charts** — Native charting framework (BarMark, LineMark, PointMark, RuleMark, AreaMark)
 
 ## Development Guidelines
 
-### Working with Xcode
-
-**Opening Project:**
-```bash
-cd /Users/rick/projects/bike/Tailwind
-open Tailwind.xcodeproj
-```
-
-**Configuring Targets:**
-1. Click blue "Tailwind" icon at top of left sidebar (not a file!)
-2. Select target from list (Tailwind, Tailwind Watch App Watch App)
-3. Use tabs: General, Signing & Capabilities, Info, Build Settings
-
-**Running on Device:**
-- Select target (Tailwind or Watch App)
-- Select device from dropdown
-- Cmd+R to build and run
-
-### Git Workflow
-
-**Current Branch:** `feature/tab-based-architecture`
-
-```bash
-# Check status
-git status
-git log --oneline -10
-
-# Make changes
-git add -A
-git commit -m "Descriptive message"
-git push origin feature/tab-based-architecture
-
-# Merge to main (when feature is complete)
-git checkout main
-git merge feature/tab-based-architecture
-git push origin main
-```
+### Xcode Project
+- Uses **PBXFileSystemSynchronizedRootGroup** — new Swift files are auto-detected by Xcode, no need to edit project.pbxproj
+- SourceKit single-file analysis shows false "Cannot find type" errors — these resolve when building the full project
 
 ### Code Style
+- SwiftUI declarative syntax
+- `@EnvironmentObject` for shared services
+- `@State` / `@Published` for UI state
+- Print statements with emoji prefixes: `📱` app, `⚡` power, `📊` metrics, `📥` import, `✅` success, `❌` error, `⚠️` warning
+- Codable structs with UserDefaults persistence pattern (static `load()` + instance `save()`)
 
-- Use SwiftUI declarative syntax
-- Prefer `@EnvironmentObject` for shared services
-- Use `.onChange()` for reactive updates
-- Weak self in closures: `[weak self]` or `[weak service]`
-- Published properties for UI-driven state
-- Print statements with emoji prefixes for debugging:
-  - `📱` iPhone
-  - `⌚` Watch
-  - `🔵` Bluetooth
-  - `❤️` Heart rate
-  - `🎬` Start
-  - `🛑` Stop
+### HealthKit Patterns
+- **Critical**: Cap sample queries (10,800 max) to prevent OOM kills
+- Use `limit: 1` for existence checks (`hasPowerData`)
+- Two-phase approach: cheap existence check first, then full fetch only for confirmed data
+- 100ms pause between batch operations to let memory settle
+- Deduplicate HealthKit workouts by start time (multiple sources write same workout)
 
-### Adding New Bluetooth Sensor Type
+### Known Harmless Warnings
+- `CFPrefsPlistSource` / `kCFPreferencesAnyUser` — App Group UserDefaults at launch, mitigated with lazy property
+- `Failed to create 1125x0 image slot` — iOS rendering engine, zero-height chart during layout
+- `RBSServiceErrorDomain Code=1 'Client not entitled'` — RunningBoard system noise
+- `UIViewAlertForUnsatisfiableConstraints` — iOS keyboard auto-layout internal conflict
 
-1. Add to `SensorType` enum in `SensorType.swift`
-2. Update `BluetoothService` to handle new UUID
-3. Add callback in `AppServices.init()`
-4. Add update method in `SensorDataService`
-5. Update UI in `MainView` to display
+### Git
+- **Current branch**: `fit-import-pivot`
+- **Main branch**: `main`
+- **Push auth issue**: `rick12341` doesn't have push access to `pantoot/Tailwind` — needs `gh auth login` or SSH remote URL fix
 
-### Adding New Maintenance Schedule
+## Testing Checklist
 
-1. Add static function to `MaintenanceSchedule` in `MaintenanceItem.swift`
-2. Update `BikeStable.loadMaintenanceSchedule()` with detection logic
-3. Update `BikeEditView.getScheduleCount()` to return correct count
+**FIT Import:**
+- [ ] Import FIT file via file picker → ride appears with metrics
+- [ ] Import FIT with power meter → creatineMetrics populated
+- [ ] Import FIT without power → creatineMetrics is nil
+- [ ] Share extension queues file → app processes on foreground
 
-### Memory Management
+**Apple Health Import:**
+- [ ] Import last 30/60/90 days → workouts with HR/power imported
+- [ ] Duplicate detection skips already-imported rides
+- [ ] Peloton rides include power data in creatine analysis
 
-- **Critical**: Limit HealthKit queries to recent data only
-- Use `limit: 1` for anchored queries (not `HKObjectQueryNoLimit`)
-- Reset anchors when stopping streams
-- Weak references in closures to prevent retain cycles
+**Creatine Focus Tab:**
+- [ ] Rides < 20 min filtered out
+- [ ] Match threshold uses Zone 6 (120% FTP) when FTP is set
+- [ ] Charts show creatine start date annotation
+- [ ] Weight quick-entry works for W/kg calculation
 
-## Testing
+**Settings:**
+- [ ] Save profile persists LTHR, FTP, weight
+- [ ] LTHR estimation returns deduplicated results
+- [ ] FTP fetch from Apple Health (may return nil if source app doesn't write it)
+- [ ] Reanalyze Power Data backfills creatine metrics from HealthKit
+- [ ] Ramp rate warning shows on dashboard when CTL delta > 5/week
 
-### Manual Testing Checklist
+## User Context
 
-**Ride Recording:**
-- [ ] Start ride → GPS starts, sensors connect
-- [ ] Pause automatically at stoplights
-- [ ] Resume when moving again
-- [ ] Stop ride → saves to HealthKit
-- [ ] Ride appears in History tab
-
-**Watch Integration:**
-- [ ] Watch displays live metrics during ride
-- [ ] Watch can start ride (iPhone starts recording)
-- [ ] Watch can stop ride (iPhone saves ride)
-- [ ] Watch HR used when no Bluetooth HR
-
-**Bike Switching:**
-- [ ] Tap bike name in toolbar → sheet appears
-- [ ] Select different bike → sensors reconnect
-- [ ] Maintenance items load correctly per bike
-- [ ] Miles tracked per bike
-
-**Sensors:**
-- [ ] Bluetooth HR connects and displays
-- [ ] Watch HR appears when no Bluetooth
-- [ ] Bluetooth HR takes priority when both active
-- [ ] Battery levels shown for sensors
-
-### Console Logs to Check
-
-```
-✅ Successfully loaded X bikes
-🔧 Found bike at index X: [name]
-❤️ Using Bluetooth HR: 145 bpm
-❤️ Using Watch HR: 142 bpm
-⌚ Ignoring watch HR - using Bluetooth HR (received 2s ago)
-📱 iPhone: Received watch HR: 145 bpm
-🎬 Starting ride from watch command
-🛑 Stopping ride from watch command
-```
-
-## Documentation Files
-
-- `WATCH_HR_SETUP.md` - Apple Watch HealthKit setup instructions
-- `Documentation/WATCH_APP_SETUP.md` - Watch app overview
-- `README.md` - Project overview for GitHub
-- `.gitignore` - Standard Xcode ignores (working correctly)
-
-## Environment
-
-**User:** Rick
-**Machine:** Rick's MacBook Pro (M-series)
-**Xcode:** 26.1 (24454)
-**iOS:** 26.1
-**watchOS:** Latest
-**Test Device:** iPhone 12,3 (iPhone 11 Pro?)
-
-## Important Notes for Next Session
-
-1. **Watch app needs manual Xcode configuration** - HealthKit capability and privacy string must be added in Xcode (can't be done via code)
-
-2. **Branch strategy** - We're on `feature/tab-based-architecture`. When ready to release, merge to `main`.
-
-3. **No secrets in repo** - All clear, safe for public GitHub
-
-4. **Memory leak fixed** - Watch HR streaming was causing crashes, now limited to 1 sample with 10s window
-
-5. **Portrait mode optimized** - Button placement fixed, elevation metrics removed from display (still tracked)
-
-6. **Bike-specific maintenance working** - Auto-detects Intense 951 (gravel) and Pivot 429 (mountain) by name/type
-
-7. **Watch remote control working** - Start/Stop from watch triggers iPhone ride recording
-
-## Useful Commands
-
-```bash
-# Find files
-find . -name "*.swift" -type f
-
-# Search code
-grep -r "functionName" --include="*.swift"
-
-# Check git history
-git log --oneline --graph --all
-
-# View specific commit
-git show <commit-hash>
-
-# Check what's in repo
-git ls-files
-
-# Build from command line (if needed)
-xcodebuild -scheme Tailwind -destination 'platform=iOS,name=iPhone'
-```
-
-## Contact & Support
-
-- **GitHub Issues**: https://github.com/pantoot/Tailwind/issues
-- **User**: Rick (@pantoot)
-- **App Store**: Not yet published
-- **Status**: Active development, personal project
+**User:** Rick, age 51
+**Bikes:** Magene cycling computer (outdoor), Peloton (indoor)
+**LTHR:** ~152-153 bpm (validated by estimator)
+**FTP:** ~250W (to be confirmed from Peloton settings)
+**Power profile:** ~200W average on 2-hour rides, ~250W peak
+**Creatine supplementation:** Tracking effects on burst power and recovery

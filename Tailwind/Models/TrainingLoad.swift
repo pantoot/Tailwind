@@ -281,6 +281,18 @@ class TrainingLoadManager: ObservableObject {
         return (weekTSS: totalTSS, weekAverage: averageTSS)
     }
 
+    /// Ramp rate: CTL now vs CTL 7 days ago. Values > 5 risk injury/illness.
+    func getRampRate() -> Double {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: today) ?? today
+
+        let ctlNow = calculateMetrics(asOf: today).ctl
+        let ctlLastWeek = calculateMetrics(asOf: weekAgo).ctl
+
+        return ctlNow - ctlLastWeek
+    }
+
     // Predict TSB after a planned workout
     func predictTSB(afterWorkoutTSS tss: Double) -> Double {
         // Simulate adding the workout to today

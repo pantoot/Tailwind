@@ -23,7 +23,8 @@ class HealthKitService: ObservableObject {
         HKObjectType.quantityType(forIdentifier: .activeEnergyBurned)!,
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
-        HKObjectType.quantityType(forIdentifier: .cyclingPower)!
+        HKObjectType.quantityType(forIdentifier: .cyclingPower)!,
+        HKObjectType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!
     ]
 
     init() {
@@ -666,6 +667,316 @@ class HealthKitService: ObservableObject {
             print("⚠️ No HR samples for workout: \(error.localizedDescription)")
             return []
         }
+    }
+
+    // MARK: - FTP
+
+    /// Fetch the most recent FTP value from HealthKit (written by Peloton, Apple Watch, etc.)
+    func fetchFTP() async -> Double? {
+        let ftpType = HKQuantityType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!
+
+        do {
+            let sample: HKQuantitySample? = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: ftpType,
+                    predicate: nil,
+                    limit: 1,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results?.first as? HKQuantitySample)
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            if let sample = sample {
+                let watts = sample.quantity.doubleValue(for: .watt())
+                let date = sample.startDate
+                print("⚡ Found FTP in HealthKit: \(Int(watts))W (from \(date))")
+                return watts
+            }
+
+            print("⚡ No FTP found in HealthKit")
+            return nil
+        } catch {
+            print("⚠️ Failed to fetch FTP: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    // MARK: - LTHR Estimation
+
+    struct LTHREstimate {
+        let estimatedLTHR: Int
+        let best20MinAvgHR: Double
+        let workoutDate: Date
+        let workoutDuration: TimeInterval
+        let candidates: [LTHRCandidate]  // Top efforts for context
+    }
+
+    struct LTHRCandidate {
+        let date: Date
+        let best20MinHR: Double
+        let avgHR: Double
+        let maxHR: Double
+        let duration: TimeInterval
+    }
+
+    /// Estimate LTHR by finding the highest 20-minute rolling average HR across recent cycling workouts.
+    /// Returns nil if insufficient data.
+    func estimateLTHR(days: Int = 90, progress: @escaping (String) -> Void) async -> LTHREstimate? {
+        let endDate = Date()
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return nil }
+
+        progress("Fetching cycling workouts...")
+
+        // Fetch cycling workouts
+        let workouts: [HKWorkout]
+        do {
+            workouts = try await fetchCyclingWorkouts(from: startDate, to: endDate)
+        } catch {
+            print("❌ LTHR estimation: failed to fetch workouts: \(error)")
+            return nil
+        }
+
+        // Filter to workouts > 20 minutes (need at least 20 min for rolling window)
+        // Deduplicate by start time — HealthKit returns the same ride from multiple sources
+        let longEnough = workouts.filter { $0.duration >= 1200 } // 20 min
+        var seen = Set<Int>() // hash of start time rounded to nearest minute
+        let eligible = longEnough.filter { workout in
+            let key = Int(workout.startDate.timeIntervalSinceReferenceDate / 60)
+            return seen.insert(key).inserted
+        }
+        guard !eligible.isEmpty else {
+            progress("No workouts > 20 min found")
+            return nil
+        }
+
+        progress("Analyzing \(eligible.count) workouts...")
+
+        var candidates: [LTHRCandidate] = []
+        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+
+        for (i, workout) in eligible.enumerated() {
+            progress("Scanning HR in workout \(i + 1) of \(eligible.count)...")
+
+            // Fetch HR samples for this workout (capped)
+            let predicate = HKQuery.predicateForSamples(
+                withStart: workout.startDate,
+                end: workout.endDate,
+                options: .strictStartDate
+            )
+            let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+
+            let hrSamples: [HKQuantitySample]
+            do {
+                hrSamples = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(
+                        sampleType: hrType,
+                        predicate: predicate,
+                        limit: 10800,
+                        sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                    ) { _, results, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+            } catch {
+                continue
+            }
+
+            guard hrSamples.count >= 20 else { continue }
+
+            // Build dense 1-second HR array for this workout
+            let bpmValues = hrSamples.map { $0.quantity.doubleValue(for: bpmUnit) }
+            let timestamps = hrSamples.map { $0.startDate }
+
+            // Compute the best 20-minute rolling average
+            // Use sample-based window (not time-based) since HR samples are ~1/sec from Peloton
+            // but may be sparser from Apple Watch (~every 5s)
+            let windowSeconds = 1200.0 // 20 minutes
+            var best20Min = 0.0
+
+            // Sliding window using timestamps for accuracy
+            var windowStart = 0
+            var windowSum = 0.0
+            var windowCount = 0
+
+            for end in 0..<hrSamples.count {
+                windowSum += bpmValues[end]
+                windowCount += 1
+
+                // Shrink window from left until it fits within 20 minutes
+                while windowStart < end &&
+                      timestamps[end].timeIntervalSince(timestamps[windowStart]) > windowSeconds {
+                    windowSum -= bpmValues[windowStart]
+                    windowCount -= 1
+                    windowStart += 1
+                }
+
+                // Only consider if window spans at least 18 minutes (allow small gaps)
+                let windowDuration = timestamps[end].timeIntervalSince(timestamps[windowStart])
+                if windowDuration >= 1080 && windowCount >= 10 {
+                    let avg = windowSum / Double(windowCount)
+                    if avg > best20Min {
+                        best20Min = avg
+                    }
+                }
+            }
+
+            if best20Min > 0 {
+                let avgHR = bpmValues.reduce(0, +) / Double(bpmValues.count)
+                let maxHR = bpmValues.max() ?? 0
+
+                candidates.append(LTHRCandidate(
+                    date: workout.startDate,
+                    best20MinHR: best20Min,
+                    avgHR: avgHR,
+                    maxHR: maxHR,
+                    duration: workout.duration
+                ))
+            }
+
+            // Brief pause between workouts for memory
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        guard !candidates.isEmpty else {
+            progress("No usable HR data found")
+            return nil
+        }
+
+        // Sort by best 20-min HR descending
+        candidates.sort { $0.best20MinHR > $1.best20MinHR }
+
+        let best = candidates[0]
+
+        // LTHR estimate: best 20-min average is a good proxy
+        // If they did a true 30-min TT, last 20 min avg ≈ LTHR
+        // For general rides, best 20-min avg slightly overestimates (adrenaline, drafting)
+        // Apply a small 2% discount for non-test conditions
+        let estimated = Int(round(best.best20MinHR * 0.98))
+
+        return LTHREstimate(
+            estimatedLTHR: estimated,
+            best20MinAvgHR: best.best20MinHR,
+            workoutDate: best.date,
+            workoutDuration: best.duration,
+            candidates: Array(candidates.prefix(5))
+        )
+    }
+
+    /// Quick check: does HealthKit have any power data for this ride's time window?
+    func hasPowerData(for ride: Ride) async -> Bool {
+        let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower)!
+        let predicate = HKQuery.predicateForSamples(
+            withStart: ride.date,
+            end: ride.date.addingTimeInterval(ride.duration),
+            options: .strictStartDate
+        )
+
+        do {
+            let count: Int = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: powerType,
+                    predicate: predicate,
+                    limit: 1,
+                    sortDescriptors: nil
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results?.count ?? 0)
+                    }
+                }
+                healthStore.execute(query)
+            }
+            return count > 0
+        } catch {
+            return false
+        }
+    }
+
+    /// Reanalyze an existing ride by fetching power + HR samples from HealthKit.
+    /// Returns updated CreatineMetrics if power data exists, nil otherwise.
+    /// Cap samples at 10800 (3 hours at 1Hz) to prevent memory issues.
+    func reanalyzePower(for ride: Ride) async -> CreatineMetrics? {
+        let startDate = ride.date
+        let endDate = startDate.addingTimeInterval(ride.duration)
+        let sampleCap = 10800
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        // Fetch power samples (capped)
+        let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower)!
+        let powerSamples: [(date: Date, watts: Double)]
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: powerType,
+                    predicate: predicate,
+                    limit: sampleCap,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+            let wattUnit = HKUnit.watt()
+            powerSamples = samples.map { (date: $0.startDate, watts: $0.quantity.doubleValue(for: wattUnit)) }
+        } catch {
+            return nil
+        }
+
+        guard !powerSamples.isEmpty else { return nil }
+
+        // Fetch HR samples (capped)
+        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        var hrSamples: [(date: Date, bpm: Double)] = []
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: hrType,
+                    predicate: predicate,
+                    limit: sampleCap,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+            hrSamples = samples.map { (date: $0.startDate, bpm: $0.quantity.doubleValue(for: bpmUnit)) }
+        } catch {
+            // HR is optional, continue without it
+        }
+
+        return CreatineAnalysisService.analyze(
+            power: powerSamples,
+            heartRate: hrSamples,
+            speed: [],
+            rideStart: startDate,
+            settings: CreatineSettings.load()
+        )
     }
 
     // Fetch route data (GPS coordinates) for a workout from HealthKit
