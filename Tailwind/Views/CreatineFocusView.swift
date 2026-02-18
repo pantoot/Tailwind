@@ -1,15 +1,18 @@
 import SwiftUI
 import Charts
 
-struct CreatineFocusView: View {
+/// Embeddable power analytics content — 4 widget cards without NavigationStack.
+/// Used inside RidesTabView's Power segment.
+struct PowerAnalyticsContent: View {
     @EnvironmentObject var rideHistory: RideHistory
     @EnvironmentObject var weightLogManager: WeightLogManager
     @EnvironmentObject var creatineSettingsManager: CreatineSettingsManager
 
-    /// Rides with power data, sorted oldest-first for charts
-    private var powerRides: [Ride] {
+    /// Rides with power data, sorted oldest-first for charts.
+    /// Excludes rides shorter than 20 minutes (cool downs, warm ups) to avoid skewing metrics.
+    var powerRides: [Ride] {
         rideHistory.rides
-            .filter { $0.creatineMetrics != nil }
+            .filter { $0.creatineMetrics != nil && $0.duration >= 20 * 60 }
             .sorted { $0.date < $1.date }
     }
 
@@ -20,26 +23,23 @@ struct CreatineFocusView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if powerRides.isEmpty {
-                    emptyState
-                } else {
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            matchesBurnedCard
-                            max30sPowerCard
-                            wkgDeltaCard
-                            hrRecoveryCard
-                            Spacer(minLength: 40)
-                        }
-                        .padding()
+        Group {
+            if powerRides.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(spacing: 20) {
+                        matchesBurnedCard
+                        max30sPowerCard
+                        wkgDeltaCard
+                        hrRecoveryCard
+                        Spacer(minLength: 40)
                     }
+                    .padding()
                 }
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("Creatine Focus")
         }
+        .background(Color(.systemGroupedBackground))
     }
 
     // MARK: - Empty State
@@ -72,7 +72,7 @@ struct CreatineFocusView: View {
                     .font(.headline)
                     .foregroundStyle(.orange)
                 Spacer()
-                Text("\(Int(creatineSettingsManager.settings.matchThresholdWatts))W+")
+                Text("\(Int(creatineSettingsManager.settings.effectiveMatchThreshold))W+")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

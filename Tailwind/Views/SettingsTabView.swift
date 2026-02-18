@@ -1,982 +1,684 @@
 import SwiftUI
 import HealthKit
-import CoreBluetooth
 
 struct SettingsTabView: View {
     @EnvironmentObject var healthKitService: HealthKitService
-    @EnvironmentObject var bluetoothService: BluetoothService
-    @EnvironmentObject var bikeStable: BikeStable
     @EnvironmentObject var rideHistory: RideHistory
     @EnvironmentObject var trainingLoadManager: TrainingLoadManager
-    @EnvironmentObject var routeMatchingService: RouteMatchingService
-    @EnvironmentObject var segmentManager: SegmentManager
-    @EnvironmentObject var gpsService: GPSService
-    @EnvironmentObject var sensorDataService: SensorDataService
+    @EnvironmentObject var weightLogManager: WeightLogManager
+    @EnvironmentObject var creatineSettingsManager: CreatineSettingsManager
 
-    @State private var showingUserProfile = false
-    @State private var showingBikeManagement = false
-    @State private var showingHealthKitImport = false
-    @State private var showingHealthKitFix = false
-    @State private var showingRoutes = false
-    @State private var showingSegments = false
-    @State private var showingSensorSettings = false
-    @State private var showingMaintenance = false
-    @State private var selectedFixDate = Date()
-    @State private var fixResultMessage = ""
-    @State private var showingFixResult = false
-    @State private var isFixingCalories = false
+    @State private var birthday: Date
+    @State private var weight: Double
+    @State private var gender: UserProfile.Gender
+    @State private var lactateThresholdHR: String
+    @State private var maxHeartRate: String
+    @State private var ftpWatts: String
+    @State private var showingSaveConfirmation = false
+
+    // Duplicate cleanup
+    @State private var showingDuplicateResult = false
+    @State private var duplicatesRemoved = 0
+
+    // Clear all rides
+    @State private var showingClearAllConfirmation = false
+
+    // Creatine reanalysis
+    @State private var isReanalyzing = false
+    @State private var reanalyzeProgress = ""
+
+    // LTHR estimation
+    @State private var isEstimatingLTHR = false
+    @State private var lthrEstimate: HealthKitService.LTHREstimate?
+    @State private var lthrProgress = ""
+    @State private var showingLTHRResult = false
+
+    init() {
+        let profile = UserProfile.load()
+        _birthday = State(initialValue: profile.birthday)
+        _weight = State(initialValue: profile.weight)
+        _gender = State(initialValue: profile.gender)
+        _lactateThresholdHR = State(initialValue: profile.lactateThresholdHR.map { String($0) } ?? "")
+        _maxHeartRate = State(initialValue: profile.maxHeartRate.map { String($0) } ?? "")
+        _ftpWatts = State(initialValue: profile.ftp.map { String($0) } ?? "")
+    }
 
     var body: some View {
-        NavigationView {
-            List {
-                // Profile Section
-                profileSection
+        NavigationStack {
+            Form {
+                Section("Profile") {
+                    DatePicker("Birthday", selection: $birthday, displayedComponents: .date)
+                        .datePickerStyle(.compact)
 
-                // HealthKit Section
-                healthKitSection
+                    HStack {
+                        Text("Age")
+                        Spacer()
+                        Text("\(calculatedAge) years")
+                            .foregroundStyle(.secondary)
+                    }
 
-                // Bikes Section
-                bikesSection
+                    HStack {
+                        Text("Weight")
+                        Spacer()
+                        TextField("Weight", value: $weight, format: .number)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                        Text("lbs")
+                            .foregroundStyle(.secondary)
+                    }
 
-                // Sensors Section
-                sensorsSection
+                    Picker("Gender", selection: $gender) {
+                        ForEach(UserProfile.Gender.allCases, id: \.self) { gender in
+                            Text(gender.rawValue).tag(gender)
+                        }
+                    }
+                }
 
-                // Routes & Segments Section
-                routesSegmentsSection
+                Section(header: Text("Training Zones"), footer: Text("LTHR is required for TSS and zone calculations. FTP is used for power zone calculations and match detection (Zone 6 = 120%+ FTP).")) {
+                    HStack {
+                        Text("LTHR (Threshold)")
+                        Spacer()
+                        TextField("LTHR", text: $lactateThresholdHR)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                        Text("bpm")
+                            .foregroundStyle(.secondary)
+                    }
 
-                // App Info Section
-                appInfoSection
+                    HStack {
+                        Text("Max Heart Rate")
+                        Spacer()
+                        TextField("Max HR", text: $maxHeartRate)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                        Text("bpm")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Text("FTP")
+                        Spacer()
+                        TextField("FTP", text: $ftpWatts)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 60)
+                        Text("W")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button(action: {
+                        Task {
+                            try? await healthKitService.requestAuthorization()
+                            if let ftp = await healthKitService.fetchFTP() {
+                                ftpWatts = String(Int(ftp))
+                            }
+                        }
+                    }) {
+                        HStack {
+                            Label("Fetch FTP from Apple Health", systemImage: "heart.fill")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if let ftp = Int(ftpWatts), ftp > 0 {
+                                Text("\(ftp)W")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    HStack {
+                        Text("Estimated Max HR")
+                        Spacer()
+                        Text("\(220 - calculatedAge) bpm")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button(action: {
+                        Task { await runLTHREstimation() }
+                    }) {
+                        HStack {
+                            Label("Estimate LTHR from Data", systemImage: "waveform.path.ecg")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if isEstimatingLTHR {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .disabled(isEstimatingLTHR)
+
+                    if !lthrProgress.isEmpty {
+                        Text(lthrProgress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    Button(action: saveProfile) {
+                        HStack {
+                            Spacer()
+                            Text("Save Profile")
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                    }
+                }
+
+                Section(header: Text("Power"), footer: Text("Set your creatine start date to see a marker on charts. Match threshold defines the minimum watts for a 'match burned'.")) {
+                    DatePicker("Creatine Start Date",
+                               selection: Binding(
+                                get: { creatineSettingsManager.settings.creatineStartDate ?? Date() },
+                                set: { creatineSettingsManager.settings.creatineStartDate = $0; creatineSettingsManager.save() }
+                               ),
+                               displayedComponents: .date)
+
+                    HStack {
+                        Text("Match Threshold")
+                        Spacer()
+                        if let ftp = Int(ftpWatts), ftp > 0 {
+                            Text("Z6: \(Int(Double(ftp) * 1.2))W")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            TextField("Watts", value: $creatineSettingsManager.settings.matchThresholdWatts, format: .number)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 60)
+                                .onChange(of: creatineSettingsManager.settings.matchThresholdWatts) { _, _ in
+                                    creatineSettingsManager.save()
+                                }
+                            Text("W")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button(action: { Task { await reanalyzeExistingRides() } }) {
+                        HStack {
+                            Label("Reanalyze Power Data", systemImage: "bolt.trianglebadge.exclamationmark.fill")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if isReanalyzing {
+                                ProgressView()
+                            } else {
+                                let count = rideHistory.rides.filter { $0.creatineMetrics == nil }.count
+                                Text("\(count) rides")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(isReanalyzing)
+
+                    if !reanalyzeProgress.isEmpty {
+                        Text(reanalyzeProgress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Weight") {
+                    NavigationLink {
+                        WeightLogView(weightLogManager: weightLogManager)
+                    } label: {
+                        HStack {
+                            Text("Weight Log")
+                            Spacer()
+                            if let w = weightLogManager.latestWeight() {
+                                Text(String(format: "%.1f lbs", w))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                Section("Data") {
+                    Button(action: cleanUpDuplicates) {
+                        HStack {
+                            Label("Clean Up Duplicates", systemImage: "doc.on.doc")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text("\(rideHistory.rides.count) rides")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        showingClearAllConfirmation = true
+                    } label: {
+                        HStack {
+                            Label("Clear All Rides", systemImage: "trash")
+                            Spacer()
+                            Text("Re-import with new settings")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section("Apple Health") {
+                    HStack {
+                        Label("Apple Health", systemImage: "heart.fill")
+                        Spacer()
+                        if healthKitService.isAuthorized {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Button("Connect") {
+                                Task {
+                                    try? await healthKitService.requestAuthorization()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section("About") {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("2.0")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Link(destination: URL(string: "https://github.com/pantoot/Tailwind")!) {
+                        HStack {
+                            Text("GitHub")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section {
+                    Text("Tailwind imports FIT files from Magene and other cycling computers directly into Apple Health, preserving all heart rate data.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .navigationTitle("Settings")
-            .sheet(isPresented: $showingUserProfile) {
-                UserProfileView()
-                    .environmentObject(sensorDataService)
-            }
-            .sheet(isPresented: $showingBikeManagement) {
-                BikeManagementView()
-                    .environmentObject(bikeStable)
-            }
-            .sheet(isPresented: $showingHealthKitImport) {
-                HealthKitImportSheet()
-                    .environmentObject(healthKitService)
-                    .environmentObject(rideHistory)
-                    .environmentObject(trainingLoadManager)
-            }
-            .sheet(isPresented: $showingHealthKitFix) {
-                HealthKitFixSheet(
-                    selectedDate: $selectedFixDate,
-                    onFix: fixCaloriesForDate
-                )
-            }
-            .sheet(isPresented: $showingRoutes) {
-                RoutesView()
-                    .environmentObject(routeMatchingService)
-            }
-            .sheet(isPresented: $showingSegments) {
-                SegmentsView()
-                    .environmentObject(segmentManager)
-                    .environmentObject(gpsService)
-                    .environmentObject(rideHistory)
-            }
-            .sheet(isPresented: $showingSensorSettings) {
-                SensorSettingsSheet()
-                    .environmentObject(bluetoothService)
-                    .environmentObject(bikeStable)
-            }
-            .sheet(isPresented: $showingMaintenance) {
-                if let bike = bikeStable.selectedBike {
-                    MaintenanceView(bike: bike)
-                        .environmentObject(bikeStable)
-                }
-            }
-            .alert("Calorie Fix Results", isPresented: $showingFixResult) {
+            .alert("Profile Saved", isPresented: $showingSaveConfirmation) {
                 Button("OK") { }
             } message: {
-                Text(fixResultMessage)
+                Text("Your profile has been saved. TSS and zone calculations will now work on future imports.")
+            }
+            .alert("Duplicates Cleaned", isPresented: $showingDuplicateResult) {
+                Button("OK") { }
+            } message: {
+                Text(duplicatesRemoved > 0
+                    ? "Removed \(duplicatesRemoved) duplicate rides. \(rideHistory.rides.count) rides remaining."
+                    : "No duplicate rides found.")
+            }
+            .alert("Clear All Rides?", isPresented: $showingClearAllConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear All", role: .destructive) {
+                    rideHistory.clearAllRides()
+                    trainingLoadManager.clearAll()
+                }
+            } message: {
+                Text("This will delete all \(rideHistory.rides.count) rides. You can re-import from Apple Health with your updated profile settings (LTHR, etc.) to recalculate TSS.")
+            }
+            .sheet(isPresented: $showingLTHRResult) {
+                LTHRResultView(
+                    estimate: lthrEstimate,
+                    currentLTHR: Int(lactateThresholdHR),
+                    onApply: { newLTHR in
+                        lactateThresholdHR = String(newLTHR)
+                        saveProfile()
+                    }
+                )
             }
         }
     }
 
-    // MARK: - Profile Section
+    // MARK: - Helpers
 
-    private var profileSection: some View {
-        Section(header: Text("Profile")) {
-            Button(action: { showingUserProfile = true }) {
-                HStack {
-                    Image(systemName: "person.circle.fill")
-                        .foregroundColor(.blue)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Personal Information")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text("Age, weight, threshold HR")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-        }
+    private var calculatedAge: Int {
+        let calendar = Calendar.current
+        let ageComponents = calendar.dateComponents([.year], from: birthday, to: Date())
+        return ageComponents.year ?? 0
     }
 
-    // MARK: - HealthKit Section
-
-    private var healthKitSection: some View {
-        Section(header: Text("HealthKit Integration")) {
-            // Authorization Status
-            HStack {
-                Image(systemName: healthKitService.isAuthorized ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundColor(healthKitService.isAuthorized ? .green : .red)
-                Text("Authorization")
-                Spacer()
-                Text(healthKitService.isAuthorized ? "Authorized" : "Not Authorized")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            // Import Rides
-            Button(action: { showingHealthKitImport = true }) {
-                HStack {
-                    Image(systemName: "square.and.arrow.down")
-                        .foregroundColor(.blue)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Import Rides")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text("Import from last 60 days")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-
-            // Fix Calorie Data
-            Button(action: { showingHealthKitFix = true }) {
-                HStack {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .foregroundColor(.orange)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Fix Calorie Data")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text("Recalculate & update in Apple Health")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-        }
+    private func saveProfile() {
+        let profile = UserProfile(
+            birthday: birthday,
+            weight: weight,
+            gender: gender,
+            heightInches: nil,
+            lactateThresholdHR: Int(lactateThresholdHR),
+            maxHeartRate: Int(maxHeartRate),
+            ftp: Int(ftpWatts)
+        )
+        profile.save()
+        showingSaveConfirmation = true
     }
 
-    // MARK: - Bikes Section
-
-    private var bikesSection: some View {
-        Section(header: Text("Bikes")) {
-            // Current Bike
-            HStack {
-                Image(systemName: "bicycle")
-                    .foregroundColor(.green)
-                Text("Current Bike")
-                Spacer()
-                Text(bikeStable.selectedBike?.name ?? "None")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            // Manage Bikes
-            Button(action: { showingBikeManagement = true }) {
-                HStack {
-                    Image(systemName: "list.bullet")
-                        .foregroundColor(.blue)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Manage Bikes")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text("\(bikeStable.bikes.count) bike\(bikeStable.bikes.count == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-
-            // Maintenance
-            if bikeStable.selectedBike != nil {
-                Button(action: { showingMaintenance = true }) {
-                    HStack {
-                        Image(systemName: "wrench.fill")
-                            .foregroundColor(.orange)
-                            .frame(width: 30)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Maintenance")
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                            Text("Track service and repairs")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .foregroundColor(.gray)
-                    }
-                }
-            }
-        }
+    private func cleanUpDuplicates() {
+        duplicatesRemoved = rideHistory.removeDuplicates()
+        showingDuplicateResult = true
     }
 
-    // MARK: - Sensors Section
-
-    private var sensorsSection: some View {
-        Section(header: Text("Sensors")) {
-            Button(action: { showingSensorSettings = true }) {
-                HStack {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundColor(.purple)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Bluetooth Sensors")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Text("Pair and manage sensors")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-
-                    // Connection indicator
-                    if bluetoothService.connectedSensors.count > 0 {
-                        HStack(spacing: 4) {
-                            Text("\(bluetoothService.connectedSensors.count)")
-                                .font(.caption2)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green)
-                                .clipShape(Capsule())
-                        }
-                    }
-
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
+    private func reanalyzeExistingRides() async {
+        await MainActor.run {
+            isReanalyzing = true
+            reanalyzeProgress = "Requesting HealthKit access..."
         }
-    }
 
-    // MARK: - Routes & Segments Section
-
-    private var routesSegmentsSection: some View {
-        Section(header: Text("Routes & Segments")) {
-            Button(action: { showingRoutes = true }) {
-                HStack {
-                    Image(systemName: "map")
-                        .foregroundColor(.blue)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("My Routes")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        if routeMatchingService.savedRoutes.count > 0 {
-                            Text("\(routeMatchingService.savedRoutes.count) route\(routeMatchingService.savedRoutes.count == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        } else {
-                            Text("No saved routes")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-
-            Button(action: { showingSegments = true }) {
-                HStack {
-                    Image(systemName: "flag.fill")
-                        .foregroundColor(.orange)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("My Segments")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        if segmentManager.segments.count > 0 {
-                            Text("\(segmentManager.segments.count) segment\(segmentManager.segments.count == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        } else {
-                            Text("No saved segments")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-        }
-    }
-
-    // MARK: - App Info Section
-
-    private var appInfoSection: some View {
-        Section(header: Text("About")) {
-            HStack {
-                Text("Version")
-                Spacer()
-                Text("1.0.0")
-                    .foregroundColor(.secondary)
-            }
-
-            Link(destination: URL(string: "https://github.com/pantoot/Tailwind")!) {
-                HStack {
-                    Text("GitHub Repository")
-                    Spacer()
-                    Image(systemName: "arrow.up.right")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-            }
-        }
-    }
-
-    // MARK: - Fix Calories
-
-    private func fixCaloriesForDate() {
-        isFixingCalories = true
-        Task {
-            let userProfile = UserProfile.load()
-            fixResultMessage = await rideHistory.fixCalories(
-                for: selectedFixDate,
-                userProfile: userProfile,
-                healthKitService: healthKitService
-            )
+        do {
+            try await healthKitService.requestAuthorization()
+        } catch {
             await MainActor.run {
-                isFixingCalories = false
-                showingHealthKitFix = false
-                showingFixResult = true
+                isReanalyzing = false
+                reanalyzeProgress = "HealthKit access denied"
             }
+            return
+        }
+
+        let ridesToAnalyze = rideHistory.rides.filter { $0.creatineMetrics == nil }
+
+        // Phase 1: Quick scan — find which rides have power data (limit:1 query, cheap)
+        await MainActor.run {
+            reanalyzeProgress = "Scanning \(ridesToAnalyze.count) rides for power data..."
+        }
+
+        var ridesWithPower: [Ride] = []
+        for ride in ridesToAnalyze {
+            if await healthKitService.hasPowerData(for: ride) {
+                ridesWithPower.append(ride)
+            }
+        }
+
+        guard !ridesWithPower.isEmpty else {
+            await MainActor.run {
+                isReanalyzing = false
+                reanalyzeProgress = "No power data found in HealthKit for \(ridesToAnalyze.count) rides."
+            }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run { reanalyzeProgress = "" }
+            return
+        }
+
+        await MainActor.run {
+            reanalyzeProgress = "Found \(ridesWithPower.count) rides with power. Analyzing..."
+        }
+
+        // Phase 2: Full analysis — only rides confirmed to have power data
+        var updated = 0
+        for (i, ride) in ridesWithPower.enumerated() {
+            await MainActor.run {
+                reanalyzeProgress = "Analyzing \(i + 1) of \(ridesWithPower.count)..."
+            }
+
+            if let metrics = await healthKitService.reanalyzePower(for: ride) {
+                let updatedRide = Ride(
+                    id: ride.id,
+                    date: ride.date,
+                    duration: ride.duration,
+                    distance: ride.distance,
+                    averageSpeed: ride.averageSpeed,
+                    maxSpeed: ride.maxSpeed,
+                    averageHeartRate: ride.averageHeartRate,
+                    maxHeartRate: ride.maxHeartRate,
+                    calories: ride.calories,
+                    elevationGain: ride.elevationGain,
+                    routeCoordinates: ride.routeCoordinates,
+                    notes: ride.notes,
+                    bikeName: ride.bikeName,
+                    bikeType: ride.bikeType,
+                    timeInZone: ride.timeInZone,
+                    hrTSS: ride.hrTSS,
+                    creatineMetrics: metrics
+                )
+                await MainActor.run {
+                    rideHistory.updateRide(ride.id, with: updatedRide)
+                }
+                updated += 1
+                print("⚡ Reanalyzed \(ride.formattedDate): 30s max=\(String(format: "%.0f", metrics.max30sPower))W, \(metrics.matchCount) matches")
+            }
+
+            // Brief pause between rides to let memory settle
+            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        }
+
+        await MainActor.run {
+            isReanalyzing = false
+            reanalyzeProgress = "Done! Analyzed \(updated) rides with power data."
+        }
+
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        await MainActor.run { reanalyzeProgress = "" }
+    }
+
+    private func runLTHREstimation() async {
+        await MainActor.run {
+            isEstimatingLTHR = true
+            lthrProgress = "Starting..."
+        }
+
+        do {
+            try await healthKitService.requestAuthorization()
+        } catch {
+            await MainActor.run {
+                isEstimatingLTHR = false
+                lthrProgress = "HealthKit access denied"
+            }
+            return
+        }
+
+        let estimate = await healthKitService.estimateLTHR(days: 90) { status in
+            Task { @MainActor in
+                lthrProgress = status
+            }
+        }
+
+        await MainActor.run {
+            isEstimatingLTHR = false
+            lthrProgress = ""
+            lthrEstimate = estimate
+            showingLTHRResult = true
         }
     }
 }
 
-// MARK: - HealthKit Import Sheet
+// MARK: - LTHR Result View
 
-struct HealthKitImportSheet: View {
-    @EnvironmentObject var healthKitService: HealthKitService
-    @EnvironmentObject var rideHistory: RideHistory
-    @EnvironmentObject var trainingLoadManager: TrainingLoadManager
-    @Environment(\.dismiss) var dismiss
+struct LTHRResultView: View {
+    let estimate: HealthKitService.LTHREstimate?
+    let currentLTHR: Int?
+    let onApply: (Int) -> Void
 
-    @State private var importedWorkouts: [HKWorkout] = []
-    @State private var isImporting = false
-    @State private var importError: String?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationView {
-            VStack {
-                if isImporting {
-                    VStack(spacing: 20) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                        Text("Loading workouts...")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = importError {
-                    VStack(spacing: 20) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 60))
-                            .foregroundColor(.red)
-                        Text("Error")
-                            .font(.title2)
-                        Text(error)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                } else if importedWorkouts.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 60))
-                            .foregroundColor(.green)
-                        Text("All Caught Up!")
-                            .font(.title2)
-                        Text("No new workouts to import")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                } else {
-                    List {
-                        Section {
-                            VStack(spacing: 12) {
-                                Text("Found \(importedWorkouts.count) workout\(importedWorkouts.count == 1 ? "" : "s") from the last 60 days")
+        NavigationStack {
+            Group {
+                if let estimate {
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            // Main result
+                            VStack(spacing: 8) {
+                                Text("Estimated LTHR")
                                     .font(.subheadline)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
 
-                                if importedWorkouts.count > 1 {
-                                    Button(action: importAllWorkouts) {
-                                        Label("Import All (\(importedWorkouts.count))", systemImage: "square.and.arrow.down.on.square")
-                                            .font(.headline)
-                                    }
-                                    .buttonStyle(.borderedProminent)
+                                Text("\(estimate.estimatedLTHR)")
+                                    .font(.system(size: 64, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.red)
+
+                                Text("bpm")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+
+                                if let current = currentLTHR, current > 0 {
+                                    let diff = estimate.estimatedLTHR - current
+                                    Text("Current: \(current) bpm (\(diff >= 0 ? "+" : "")\(diff))")
+                                        .font(.subheadline)
+                                        .foregroundStyle(abs(diff) > 5 ? .orange : .green)
                                 }
                             }
-                            .padding(.vertical, 8)
-                        }
+                            .padding(.top, 20)
 
-                        ForEach(importedWorkouts, id: \.uuid) { workout in
-                            Button(action: {
-                                importWorkout(workout)
-                            }) {
-                                WorkoutRowView(workout: workout)
+                            // Method explanation
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("How this was calculated")
+                                    .font(.headline)
+
+                                Text("Found the highest 20-minute rolling average heart rate across your recent cycling workouts, then applied a 2% discount (since field rides aren't as controlled as an FTP test).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Import from HealthKit")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                loadWorkouts()
-            }
-        }
-    }
-
-    private func loadWorkouts() {
-        isImporting = true
-        importError = nil
-
-        Task {
-            do {
-                // Request authorization if not already granted
-                if !healthKitService.isAuthorized {
-                    print("⚠️ HealthKit not authorized, requesting permission...")
-                    try await healthKitService.requestAuthorization()
-
-                    if !healthKitService.isAuthorized {
-                        throw HealthKitError.notAuthorized
-                    }
-                    print("✅ HealthKit authorization granted")
-                }
-
-                let endDate = Date()
-                let startDate = Calendar.current.date(byAdding: .day, value: -60, to: endDate)!
-
-                let workouts = try await healthKitService.fetchCyclingWorkouts(from: startDate, to: endDate)
-
-                // Filter out already imported workouts
-                let existingDates = Set(rideHistory.rides.map {
-                    Calendar.current.startOfDay(for: $0.date)
-                })
-
-                let newWorkouts = workouts.filter { workout in
-                    let workoutDay = Calendar.current.startOfDay(for: workout.startDate)
-                    return !existingDates.contains(workoutDay)
-                }
-
-                await MainActor.run {
-                    importedWorkouts = newWorkouts
-                    isImporting = false
-
-                    if newWorkouts.isEmpty && !workouts.isEmpty {
-                        print("ℹ️ All \(workouts.count) workouts already imported")
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    importError = error.localizedDescription
-                    isImporting = false
-                }
-            }
-        }
-    }
-
-    private func importAllWorkouts() {
-        Task {
-            var successCount = 0
-            var failCount = 0
-
-            for workout in importedWorkouts {
-                do {
-                    let ride = try await healthKitService.importWorkout(workout)
-
-                    await MainActor.run {
-                        rideHistory.saveRide(ride)
-
-                        if let tss = ride.hrTSS {
-                            trainingLoadManager.addTSS(date: ride.date, tss: tss)
-                        }
-                    }
-
-                    successCount += 1
-                    print("✅ Imported \(successCount)/\(importedWorkouts.count): \(ride.distance) mi")
-                } catch {
-                    failCount += 1
-                    print("❌ Failed to import workout: \(error.localizedDescription)")
-                }
-            }
-
-            await MainActor.run {
-                dismiss()
-                print("🎉 Bulk import complete: \(successCount) succeeded, \(failCount) failed")
-            }
-        }
-    }
-
-    private func importWorkout(_ workout: HKWorkout) {
-        Task {
-            do {
-                let ride = try await healthKitService.importWorkout(workout)
-
-                await MainActor.run {
-                    rideHistory.saveRide(ride)
-
-                    if let tss = ride.hrTSS {
-                        trainingLoadManager.addTSS(date: ride.date, tss: tss)
-                    }
-
-                    // Remove from list
-                    importedWorkouts.removeAll { $0.uuid == workout.uuid }
-
-                    print("✅ Imported ride: \(ride.distance) mi")
-                }
-            } catch {
-                print("❌ Failed to import: \(error.localizedDescription)")
-            }
-        }
-    }
-}
-
-struct WorkoutRowView: View {
-    let workout: HKWorkout
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(workout.startDate.formatted(date: .abbreviated, time: .shortened))
-                    .font(.headline)
-                HStack {
-                    if let distance = workout.totalDistance {
-                        Text("\(distance.doubleValue(for: .mile()), specifier: "%.2f") mi")
-                    }
-
-                    if #available(iOS 18.0, *) {
-                        if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
-                           let stat = workout.statistics(for: energyType),
-                           let calories = stat.sumQuantity()?.doubleValue(for: .kilocalorie()) {
-                            Text("• \(calories, specifier: "%.0f") cal")
-                        }
-                    } else {
-                        if let calories = workout.totalEnergyBurned {
-                            Text("• \(calories.doubleValue(for: .kilocalorie()), specifier: "%.0f") cal")
-                        }
-                    }
-
-                    Text("• \(formatDuration(workout.duration))")
-                }
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            }
-            Spacer()
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-    }
-
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let hours = Int(duration) / 3600
-        let minutes = (Int(duration) % 3600) / 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            return "\(minutes)m"
-        }
-    }
-}
-
-// MARK: - HealthKit Fix Sheet
-
-struct HealthKitFixSheet: View {
-    @Binding var selectedDate: Date
-    let onFix: () -> Void
-    @Environment(\.dismiss) var dismiss
-
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                Text("Select Date to Fix")
-                    .font(.headline)
-
-                DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                    .padding()
-
-                VStack(spacing: 12) {
-                    Text("This will recalculate calories for rides on the selected date using the correct formula and update them in Apple Health.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding()
-
-                    Button(action: {
-                        onFix()
-                    }) {
-                        Text("Fix Calories")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.blue)
-                            .cornerRadius(10)
-                    }
-                    .padding(.horizontal)
-                }
+                            .background(Color(.systemBackground))
+                            .cornerRadius(12)
 
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Fix Calorie Data")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel", action: { dismiss() })
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Sensor Settings Sheet
-
-struct SensorSettingsSheet: View {
-    @EnvironmentObject var bluetoothService: BluetoothService
-    @EnvironmentObject var bikeStable: BikeStable
-    @Environment(\.dismiss) var dismiss
-    @State private var assigningSensor: (SensorType, SensorInfo)?
-    @State private var renamingSensor: (SensorType, String)? = nil
-    @State private var showingRenameSheet = false
-    @State private var editingSensor: (sensorId: UUID, type: SensorType, customName: String?, isProfile: Bool)? = nil
-    @State private var showingSensorEditor = false
-    @State private var showingTypeSelection = false
-    @State private var pendingSensorAssignment: (SensorInfo, Bool)? = nil // (sensor, isProfile)
-
-    // Filter out sensors that are already assigned
-    var unassignedSensors: [SensorInfo] {
-        let assignedSensorIds = Set(
-            bikeStable.bikes.flatMap { bike in
-                bike.assignedSensors.values.map { $0.id }
-            } + bikeStable.profileSensors.values.map { $0.id }
-        )
-
-        return bluetoothService.discoveredSensors.filter { sensor in
-            !assignedSensorIds.contains(sensor.id.uuidString)
-        }
-    }
-
-    var body: some View {
-        NavigationView {
-            List {
-                // Bluetooth Status
-                Section(header: Text("Bluetooth Status")) {
-                    HStack {
-                        Text("Status")
-                        Spacer()
-                        Text(bluetoothStateText)
-                            .foregroundColor(bluetoothStateColor)
-                    }
-                }
-
-                // Assigned Sensors
-                Section(header: Text("Assigned Sensors")) {
-                    ForEach(SensorType.allCases, id: \.self) { sensorType in
-                        if let savedSensor = bikeStable.getSensor(for: sensorType),
-                           let sensorId = UUID(uuidString: savedSensor.id) {
-                            Button(action: {
-                                editingSensor = (sensorId: sensorId, type: sensorType, customName: savedSensor.customName, isProfile: sensorType.isProfileSensor)
-                                showingSensorEditor = true
-                            }) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        VStack(alignment: .leading) {
-                                            Text(savedSensor.displayName)
-                                                .font(.headline)
-                                                .foregroundColor(.primary)
-                                            Text(sensorType.rawValue)
-                                                .font(.caption)
-                                                .foregroundColor(.gray)
-                                        }
-
-                                        Spacer()
-
-                                        Text(sensorType.isProfileSensor ? "Profile" : bikeStable.selectedBike?.name ?? "Bike")
-                                            .font(.caption)
-                                            .foregroundColor(.blue)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.blue.opacity(0.1))
-                                            .clipShape(Capsule())
-
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    }
+                            // Best effort details
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Best Effort")
+                                    .font(.headline)
 
                                 HStack {
-                                    if bluetoothService.isConnected(sensorType) {
-                                        HStack(spacing: 8) {
-                                            Text("✓ Connected")
-                                                .font(.caption)
-                                                .foregroundColor(.green)
-
-                                            if let battery = bluetoothService.getBatteryLevel(for: sensorType) {
-                                                HStack(spacing: 2) {
-                                                    Image(systemName: batteryIcon(for: battery))
-                                                        .foregroundColor(batteryColor(for: battery))
-                                                    Text("\(battery)%")
-                                                        .font(.caption2)
-                                                        .foregroundColor(.gray)
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        Text("Disconnected")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-
-                                        Button("Reconnect") {
-                                            bluetoothService.connectToPeripheral(withId: savedSensor.id, type: sensorType)
-                                        }
-                                        .buttonStyle(.bordered)
-                                        .font(.caption)
-                                    }
+                                    Text("Date")
+                                    Spacer()
+                                    Text(estimate.workoutDate, style: .date)
+                                        .foregroundStyle(.secondary)
                                 }
-                            }
-                            }
-                        }
-                    }
-                }
+                                .font(.subheadline)
 
-                // Discovered Sensors
-                Section(header: Text("Discovered Sensors")) {
-                    if unassignedSensors.isEmpty {
-                        Text("No unassigned sensors found")
-                            .foregroundColor(.gray)
-                    } else {
-                        ForEach(unassignedSensors) { sensor in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(sensor.name)
+                                HStack {
+                                    Text("Best 20-min Avg HR")
+                                    Spacer()
+                                    Text(String(format: "%.0f bpm", estimate.best20MinAvgHR))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.subheadline)
+
+                                HStack {
+                                    Text("Ride Duration")
+                                    Spacer()
+                                    Text(formatDuration(estimate.workoutDuration))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .font(.subheadline)
+                            }
+                            .padding()
+                            .background(Color(.systemBackground))
+                            .cornerRadius(12)
+
+                            // Top candidates
+                            if estimate.candidates.count > 1 {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Top Efforts")
                                         .font(.headline)
-                                    HStack(spacing: 8) {
-                                        Text(sensor.type.rawValue)
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
 
-                                        if let battery = sensor.batteryLevel {
-                                            HStack(spacing: 2) {
-                                                Image(systemName: batteryIcon(for: battery))
+                                    ForEach(Array(estimate.candidates.prefix(5).enumerated()), id: \.offset) { index, candidate in
+                                        HStack {
+                                            Text("#\(index + 1)")
+                                                .font(.caption)
+                                                .fontWeight(.bold)
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 24)
+
+                                            VStack(alignment: .leading) {
+                                                Text(candidate.date, style: .date)
                                                     .font(.caption)
-                                                    .foregroundColor(batteryColor(for: battery))
-                                                Text("\(battery)%")
+                                                Text(formatDuration(candidate.duration))
                                                     .font(.caption2)
-                                                    .foregroundColor(.gray)
+                                                    .foregroundStyle(.tertiary)
                                             }
+
+                                            Spacer()
+
+                                            VStack(alignment: .trailing) {
+                                                Text(String(format: "%.0f", candidate.best20MinHR))
+                                                    .font(.subheadline)
+                                                    .fontWeight(.semibold)
+                                                Text("20-min avg")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.tertiary)
+                                            }
+
+                                            VStack(alignment: .trailing) {
+                                                Text(String(format: "%.0f", candidate.maxHR))
+                                                    .font(.subheadline)
+                                                Text("max")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.tertiary)
+                                            }
+                                            .frame(width: 44)
+                                        }
+                                        .padding(.vertical, 4)
+
+                                        if index < min(4, estimate.candidates.count - 1) {
+                                            Divider()
                                         }
                                     }
                                 }
+                                .padding()
+                                .background(Color(.systemBackground))
+                                .cornerRadius(12)
+                            }
 
-                                Spacer()
-
-                                if sensor.isConnected {
-                                    Button("Assign") {
-                                        // For CSC sensors (Speed/Cadence), ask user to choose type
-                                        if sensor.type == .speed || sensor.type == .cadence {
-                                            pendingSensorAssignment = (sensor, false)
-                                            showingTypeSelection = true
-                                        } else {
-                                            assigningSensor = (sensor.type, sensor)
-                                        }
+                            // Apply button
+                            if let current = currentLTHR, current != estimate.estimatedLTHR {
+                                Button(action: {
+                                    onApply(estimate.estimatedLTHR)
+                                    dismiss()
+                                }) {
+                                    HStack {
+                                        Spacer()
+                                        Text("Use \(estimate.estimatedLTHR) bpm as my LTHR")
+                                            .fontWeight(.semibold)
+                                        Spacer()
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .font(.caption)
-                                } else {
-                                    Button("Connect") {
-                                        bluetoothService.connect(to: sensor)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .font(.caption)
+                                    .padding()
+                                    .background(Color.red)
+                                    .foregroundStyle(.white)
+                                    .cornerRadius(12)
                                 }
                             }
+
+                            Spacer(minLength: 40)
                         }
+                        .padding()
                     }
+                    .background(Color(.systemGroupedBackground))
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "heart.slash")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+
+                        Text("Not Enough Data")
+                            .font(.title2)
+                            .fontWeight(.bold)
+
+                        Text("Need at least one cycling workout longer than 30 minutes with heart rate data in the last 90 days.")
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
                 }
             }
-            .navigationTitle("Bluetooth Sensors")
+            .navigationTitle("LTHR Estimate")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        dismiss()
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
                 }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        if bluetoothService.isScanning {
-                            bluetoothService.stopScanning()
-                        } else {
-                            bluetoothService.startScanning()
-                        }
-                    }) {
-                        Text(bluetoothService.isScanning ? "Stop" : "Scan")
-                    }
-                }
-            }
-            .alert("Assign Sensor", isPresented: .constant(assigningSensor != nil), presenting: assigningSensor) { sensorTuple in
-                Button("Assign to Profile") {
-                    let savedSensor = SavedSensor(
-                        id: sensorTuple.1.id.uuidString,
-                        customName: nil,
-                        type: sensorTuple.1.type,
-                        deviceName: sensorTuple.1.name
-                    )
-                    bikeStable.assignProfileSensor(savedSensor, type: sensorTuple.1.type)
-                    assigningSensor = nil
-                }
-                Button("Assign to \(bikeStable.selectedBike?.name ?? "Current Bike")") {
-                    let savedSensor = SavedSensor(
-                        id: sensorTuple.1.id.uuidString,
-                        customName: nil,
-                        type: sensorTuple.1.type,
-                        deviceName: sensorTuple.1.name
-                    )
-                    bikeStable.assignSensorToBike(savedSensor, type: sensorTuple.1.type)
-                    assigningSensor = nil
-                }
-                Button("Cancel", role: .cancel) {
-                    assigningSensor = nil
-                }
-            } message: { sensorTuple in
-                Text("\(sensorTuple.1.name) will auto-connect to the selected bike or profile.")
-            }
-            .sheet(isPresented: $showingRenameSheet) {
-                if let (sensorType, initialName) = renamingSensor {
-                    SensorRenameView(sensorType: sensorType, initialName: initialName)
-                        .environmentObject(bikeStable)
-                }
-            }
-            .sheet(isPresented: $showingSensorEditor) {
-                if let editing = editingSensor {
-                    SensorEditorView(
-                        sensorId: editing.sensorId,
-                        currentType: editing.type,
-                        customName: editing.customName,
-                        isProfileSensor: editing.isProfile
-                    )
-                    .environmentObject(bluetoothService)
-                    .environmentObject(bikeStable)
-                }
-            }
-            .alert("Select Sensor Type", isPresented: $showingTypeSelection, presenting: pendingSensorAssignment) { pending in
-                Button("Speed Sensor") {
-                    let savedSensor = SavedSensor(
-                        id: pending.0.id.uuidString,
-                        customName: nil,
-                        type: .speed,
-                        deviceName: pending.0.name
-                    )
-                    if pending.1 {
-                        bikeStable.assignProfileSensor(savedSensor, type: .speed)
-                    } else {
-                        bikeStable.assignSensorToBike(savedSensor, type: .speed)
-                    }
-                    pendingSensorAssignment = nil
-                }
-                Button("Cadence Sensor") {
-                    let savedSensor = SavedSensor(
-                        id: pending.0.id.uuidString,
-                        customName: nil,
-                        type: .cadence,
-                        deviceName: pending.0.name
-                    )
-                    if pending.1 {
-                        bikeStable.assignProfileSensor(savedSensor, type: .cadence)
-                    } else {
-                        bikeStable.assignSensorToBike(savedSensor, type: .cadence)
-                    }
-                    pendingSensorAssignment = nil
-                }
-                Button("Cancel", role: .cancel) {
-                    pendingSensorAssignment = nil
-                }
-            } message: { pending in
-                Text("This is a combined Speed/Cadence sensor. Choose which data you want to use from \(pending.0.name).")
             }
         }
     }
 
-    private var bluetoothStateText: String {
-        switch bluetoothService.bluetoothState {
-        case .poweredOn: return "On"
-        case .poweredOff: return "Off"
-        case .unauthorized: return "Unauthorized"
-        case .unsupported: return "Unsupported"
-        default: return "Unknown"
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
         }
-    }
-
-    private var bluetoothStateColor: Color {
-        switch bluetoothService.bluetoothState {
-        case .poweredOn: return .green
-        default: return .red
-        }
-    }
-
-    private func batteryIcon(for level: Int) -> String {
-        switch level {
-        case 76...100: return "battery.100"
-        case 51...75: return "battery.75"
-        case 26...50: return "battery.50"
-        case 11...25: return "battery.25"
-        default: return "battery.0"
-        }
-    }
-
-    private func batteryColor(for level: Int) -> Color {
-        switch level {
-        case 26...100: return .green
-        case 11...25: return .orange
-        default: return .red
-        }
+        return "\(minutes)m"
     }
 }

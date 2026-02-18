@@ -10,14 +10,27 @@ struct TailwindApp: App {
     /// Track if we're handling a URL import (prevents race with pending imports)
     @State private var isHandlingURLImport = false
 
+    /// Shared App Group defaults — lazy to avoid CFPrefs warning at launch
+    private var sharedDefaults: UserDefaults? {
+        UserDefaults(suiteName: "group.com.rick.Tailwind")
+    }
+
+    @State private var selectedTab = 0
+
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $selectedTab) {
                 ImportView()
                     .tabItem { Label("Dashboard", systemImage: "chart.bar.fill") }
+                    .tag(0)
 
-                CreatineFocusView()
-                    .tabItem { Label("Creatine", systemImage: "bolt.fill") }
+                RidesTabView()
+                    .tabItem { Label("Rides", systemImage: "bicycle") }
+                    .tag(1)
+
+                SettingsTabView()
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(2)
             }
                 .environmentObject(services.fitImportService)
                 .environmentObject(services.rideHistory)
@@ -83,6 +96,9 @@ struct TailwindApp: App {
                             print("📊 Added TSS: \(String(format: "%.0f", tss))")
                         }
 
+                        // Switch to Rides tab
+                        await MainActor.run { selectedTab = 1 }
+
                         // Clean up the temp file after import
                         try? FileManager.default.removeItem(at: fileURL)
                     } catch {
@@ -108,6 +124,9 @@ struct TailwindApp: App {
                         }
                         print("📊 Added TSS: \(String(format: "%.0f", tss))")
                     }
+
+                    // Switch to Rides tab
+                    await MainActor.run { selectedTab = 1 }
                 } catch {
                     print("❌ Failed to import FIT file: \(error)")
                 }
@@ -119,7 +138,7 @@ struct TailwindApp: App {
 
     /// Remove a specific file from pending imports (to prevent double-import)
     private func clearPendingImport(path: String) {
-        guard let defaults = UserDefaults(suiteName: "group.com.rick.Tailwind") else { return }
+        guard let defaults = sharedDefaults else { return }
         var pending = defaults.stringArray(forKey: "pendingFITImports") ?? []
         if let index = pending.firstIndex(of: path) {
             pending.remove(at: index)
@@ -131,7 +150,7 @@ struct TailwindApp: App {
     /// Process any FIT files shared via the extension while app was closed
     private func processPendingImports() {
         print("📋 Checking for pending imports...")
-        guard let defaults = UserDefaults(suiteName: "group.com.rick.Tailwind") else {
+        guard let defaults = sharedDefaults else {
             print("❌ Could not access App Group defaults")
             return
         }
@@ -167,6 +186,9 @@ struct TailwindApp: App {
                         }
                         print("📊 Added TSS: \(String(format: "%.0f", tss))")
                     }
+
+                    // Switch to Rides tab
+                    await MainActor.run { selectedTab = 1 }
 
                     // Clean up after successful import
                     try? FileManager.default.removeItem(at: url)
