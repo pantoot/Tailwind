@@ -155,6 +155,19 @@ class RideHistory: ObservableObject {
         persistRides()
     }
 
+    // Delete all rides for a specific date, returns count removed
+    func deleteRidesForDate(_ date: Date) -> Int {
+        let calendar = Calendar.current
+        let before = rides.count
+        rides.removeAll { calendar.isDate($0.date, inSameDayAs: date) }
+        let removed = before - rides.count
+        if removed > 0 {
+            persistRides()
+            print("🗑️ Removed \(removed) rides for \(date)")
+        }
+        return removed
+    }
+
     // Clear all rides (for re-import with new settings)
     func clearAllRides() {
         let count = rides.count

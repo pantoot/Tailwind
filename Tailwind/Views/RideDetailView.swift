@@ -19,6 +19,9 @@ struct RideDetailView: View {
     @State private var showingMergeError = false
     @State private var mergeErrorMessage = ""
 
+    // Edit state
+    @State private var showingEdit = false
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -163,8 +166,15 @@ struct RideDetailView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+                    HStack(spacing: 16) {
+                        Button {
+                            showingEdit = true
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        Button("Done") {
+                            dismiss()
+                        }
                     }
                 }
             }
@@ -187,6 +197,15 @@ struct RideDetailView: View {
                 Button("OK") { }
             } message: {
                 Text(mergeErrorMessage)
+            }
+            .sheet(isPresented: $showingEdit) {
+                EditRideView(ride: ride) { updatedRide in
+                    rideHistory.updateRide(ride.id, with: updatedRide)
+                    if let tss = updatedRide.hrTSS {
+                        trainingLoadManager.addTSS(date: updatedRide.date, tss: tss)
+                    }
+                    ride = updatedRide
+                }
             }
         }
     }

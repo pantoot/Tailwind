@@ -24,7 +24,10 @@ class HealthKitService: ObservableObject {
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
         HKObjectType.quantityType(forIdentifier: .cyclingPower)!,
-        HKObjectType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!
+        HKObjectType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!,
+        HKObjectType.quantityType(forIdentifier: .bodyMass)!,
+        HKObjectType.quantityType(forIdentifier: .leanBodyMass)!,
+        HKObjectType.quantityType(forIdentifier: .bodyFatPercentage)!
     ]
 
     init() {
@@ -253,6 +256,58 @@ class HealthKitService: ObservableObject {
         }
 
         print("🗑️ Deleted ride from HealthKit")
+    }
+
+    // MARK: - Delete Tailwind Workouts
+
+    /// Delete all Tailwind-created workouts for a given day from HealthKit.
+    /// These are the Move-ring duplicate workouts with metadata["Tailwind"] == true.
+    func deleteTailwindWorkouts(for date: Date) async throws -> Int {
+        guard isHealthKitAvailable && isAuthorized else {
+            throw HealthKitError.notAuthorized
+        }
+
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+
+        let workoutPredicate = HKQuery.predicateForWorkouts(with: .cycling)
+        let datePredicate = HKQuery.predicateForSamples(
+            withStart: startOfDay,
+            end: endOfDay,
+            options: .strictStartDate
+        )
+        let compound = NSCompoundPredicate(andPredicateWithSubpredicates: [workoutPredicate, datePredicate])
+
+        let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: compound,
+                limit: 50,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples as? [HKWorkout] ?? [])
+                }
+            }
+            healthStore.execute(query)
+        }
+
+        // Filter to Tailwind-created workouts only
+        let tailwindWorkouts = workouts.filter { workout in
+            workout.metadata?["Tailwind"] as? Bool == true
+        }
+
+        for workout in tailwindWorkouts {
+            try await healthStore.delete(workout)
+        }
+
+        if !tailwindWorkouts.isEmpty {
+            print("🗑️ Deleted \(tailwindWorkouts.count) Tailwind workouts from HealthKit for \(date)")
+        }
+        return tailwindWorkouts.count
     }
 
     // MARK: - Import Workouts
@@ -704,6 +759,132 @@ class HealthKitService: ObservableObject {
         } catch {
             print("⚠️ Failed to fetch FTP: \(error.localizedDescription)")
             return nil
+        }
+    }
+
+    // MARK: - Body Mass (Weight)
+
+    /// Fetch body mass samples from HealthKit (Withings scale, manual entries, etc.)
+    /// Returns entries sorted newest-first, capped at 365 days.
+    func fetchWeightSamples(days: Int = 365) async -> [(date: Date, lbs: Double)] {
+        let bodyMassType = HKQuantityType.quantityType(forIdentifier: .bodyMass)!
+        let endDate = Date()
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return [] }
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: bodyMassType,
+                    predicate: predicate,
+                    limit: 1000,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            let lbsUnit = HKUnit.pound()
+            let result = samples.map { sample in
+                (date: sample.startDate, lbs: sample.quantity.doubleValue(for: lbsUnit))
+            }
+            print("⚖️ Fetched \(result.count) weight samples from HealthKit")
+            return result
+        } catch {
+            print("⚠️ Failed to fetch weight data: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Fetch lean body mass samples from HealthKit (Withings scale).
+    func fetchLeanBodyMassSamples(days: Int = 365) async -> [(date: Date, lbs: Double)] {
+        let leanType = HKQuantityType.quantityType(forIdentifier: .leanBodyMass)!
+        let endDate = Date()
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return [] }
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: leanType,
+                    predicate: predicate,
+                    limit: 1000,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            let lbsUnit = HKUnit.pound()
+            let result = samples.map { sample in
+                (date: sample.startDate, lbs: sample.quantity.doubleValue(for: lbsUnit))
+            }
+            print("💪 Fetched \(result.count) lean body mass samples from HealthKit")
+            return result
+        } catch {
+            print("⚠️ Failed to fetch lean body mass: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Fetch body fat percentage samples from HealthKit (Withings scale).
+    func fetchBodyFatSamples(days: Int = 365) async -> [(date: Date, pct: Double)] {
+        let fatType = HKQuantityType.quantityType(forIdentifier: .bodyFatPercentage)!
+        let endDate = Date()
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return [] }
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        do {
+            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
+                let query = HKSampleQuery(
+                    sampleType: fatType,
+                    predicate: predicate,
+                    limit: 1000,
+                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
+                ) { _, results, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            // HealthKit stores body fat as a fraction (0.0-1.0), convert to percentage
+            let result = samples.map { sample in
+                (date: sample.startDate, pct: sample.quantity.doubleValue(for: .percent()) * 100)
+            }
+            print("📊 Fetched \(result.count) body fat samples from HealthKit")
+            return result
+        } catch {
+            print("⚠️ Failed to fetch body fat: \(error.localizedDescription)")
+            return []
         }
     }
 

@@ -374,42 +374,114 @@ struct PowerAnalyticsContent: View {
 
 struct WeightQuickEntry: View {
     @ObservedObject var weightLogManager: WeightLogManager
+    @EnvironmentObject var healthKitService: HealthKitService
     @State private var weightText = ""
+    @State private var isSyncing = false
+    @State private var syncMessage: String?
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "scalemass")
-                .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    Task { await syncFromHealthKit() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "heart.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                        Text("Sync")
+                            .font(.caption)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isSyncing)
 
-            TextField("Weight", text: $weightText)
-                .keyboardType(.decimalPad)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 80)
-                .focused($isFocused)
+                if isSyncing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
 
-            Text("lbs")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Spacer()
 
-            Button("Log") {
-                if let weight = Double(weightText), weight > 0 {
-                    weightLogManager.addEntry(WeightEntry(weightLbs: weight))
-                    weightText = ""
-                    isFocused = false
+                if let latest = weightLogManager.latestWeight() {
+                    Text(String(format: "%.1f lbs", latest))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(Double(weightText) == nil)
 
-            Spacer()
-
-            if let latest = weightLogManager.latestWeight() {
-                Text(String(format: "%.1f lbs", latest))
-                    .font(.caption)
+            if let msg = syncMessage {
+                Text(msg)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+
+            HStack(spacing: 8) {
+                Image(systemName: "scalemass")
+                    .foregroundStyle(.secondary)
+
+                TextField("Weight", text: $weightText)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 80)
+                    .focused($isFocused)
+
+                Text("lbs")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Button("Log") {
+                    if let weight = Double(weightText), weight > 0 {
+                        weightLogManager.addEntry(WeightEntry(weightLbs: weight))
+                        weightText = ""
+                        isFocused = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(Double(weightText) == nil)
+
+                Spacer()
+            }
         }
+    }
+
+    private func syncFromHealthKit() async {
+        isSyncing = true
+        syncMessage = nil
+
+        // Re-request auth to prompt for any new types (lean body mass, body fat)
+        try? await healthKitService.requestAuthorization()
+
+        async let weightTask = healthKitService.fetchWeightSamples(days: 365)
+        async let leanTask = healthKitService.fetchLeanBodyMassSamples(days: 365)
+        async let fatTask = healthKitService.fetchBodyFatSamples(days: 365)
+
+        let weightSamples = await weightTask
+        let leanSamples = await leanTask
+        let fatSamples = await fatTask
+
+        let added = weightLogManager.syncFromHealthKit(
+            weightSamples: weightSamples,
+            leanMassSamples: leanSamples,
+            bodyFatSamples: fatSamples
+        )
+
+        await MainActor.run {
+            if weightSamples.isEmpty {
+                syncMessage = "No weight data in Apple Health"
+            } else if added == 0 {
+                syncMessage = "Up to date"
+            } else {
+                syncMessage = "+\(added) entries from Health"
+            }
+            isSyncing = false
+        }
+
+        // Auto-clear message after 3 seconds
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        await MainActor.run { syncMessage = nil }
     }
 }

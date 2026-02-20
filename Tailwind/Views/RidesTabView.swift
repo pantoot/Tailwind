@@ -28,6 +28,7 @@ struct RidesTabView: View {
     @State private var showingHealthImport = false
     @State private var isImportingFromHealth = false
     @State private var healthImportProgress = ""
+    @State private var showingReimportConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -68,6 +69,14 @@ struct RidesTabView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage)
+        }
+        .confirmationDialog("Reimport Today", isPresented: $showingReimportConfirm) {
+            Button("Reimport Today's Rides", role: .destructive) {
+                Task { await reimportToday() }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This will delete today's rides from Tailwind and remove Tailwind-created HealthKit workouts, then reimport today's Peloton/Zwift rides cleanly.")
         }
         .confirmationDialog("Import from Apple Health", isPresented: $showingHealthImport) {
             Button("Last 30 Days") {
@@ -117,40 +126,56 @@ struct RidesTabView: View {
     // MARK: - Import Buttons
 
     private var importButtonsRow: some View {
-        HStack(spacing: 12) {
-            Button(action: { showingFilePicker = true }) {
-                HStack {
-                    if fitImportService.isImporting {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "square.and.arrow.down.fill")
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Button(action: { showingFilePicker = true }) {
+                    HStack {
+                        if fitImportService.isImporting {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "square.and.arrow.down.fill")
+                        }
+                        Text(fitImportService.isImporting ? "Importing..." : "Import FIT")
+                            .fontWeight(.semibold)
                     }
-                    Text(fitImportService.isImporting ? "Importing..." : "Import FIT")
-                        .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .foregroundStyle(.white)
+                    .cornerRadius(10)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.blue)
-                .foregroundStyle(.white)
-                .cornerRadius(10)
-            }
-            .disabled(fitImportService.isImporting)
+                .disabled(fitImportService.isImporting)
 
-            Button(action: { showingHealthImport = true }) {
-                HStack {
-                    if isImportingFromHealth {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "heart.fill")
+                Button(action: { showingHealthImport = true }) {
+                    HStack {
+                        if isImportingFromHealth {
+                            ProgressView()
+                                .tint(.white)
+                        } else {
+                            Image(systemName: "heart.fill")
+                        }
+                        Text(isImportingFromHealth ? "Importing..." : "Apple Health")
+                            .fontWeight(.semibold)
                     }
-                    Text(isImportingFromHealth ? "Importing..." : "Apple Health")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.pink)
+                    .foregroundStyle(.white)
+                    .cornerRadius(10)
+                }
+                .disabled(isImportingFromHealth)
+            }
+
+            Button(action: { showingReimportConfirm = true }) {
+                HStack {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("Reimport Today")
                         .fontWeight(.semibold)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(Color.pink)
+                .background(Color.orange)
                 .foregroundStyle(.white)
                 .cornerRadius(10)
             }
@@ -337,6 +362,103 @@ struct RidesTabView: View {
 
         } catch {
             print("❌ Health import error: \(error)")
+            await MainActor.run {
+                isImportingFromHealth = false
+                healthImportProgress = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Reimport Today
+
+    private func reimportToday() async {
+        await MainActor.run {
+            isImportingFromHealth = true
+            healthImportProgress = "Cleaning up today's rides..."
+        }
+
+        do {
+            // Step 1: Delete today's rides from Tailwind
+            let removedRides = await MainActor.run {
+                rideHistory.deleteRidesForDate(Date())
+            }
+            print("📥 Reimport: removed \(removedRides) rides from Tailwind")
+
+            // Step 2: Delete Tailwind-created HealthKit workouts for today
+            await MainActor.run {
+                healthImportProgress = "Removing Tailwind workouts from HealthKit..."
+            }
+            let removedHK = try await healthKitService.deleteTailwindWorkouts(for: Date())
+            print("📥 Reimport: removed \(removedHK) Tailwind workouts from HealthKit")
+
+            // Step 3: Reimport today's workouts from Apple Health
+            await MainActor.run {
+                healthImportProgress = "Reimporting today's workouts..."
+            }
+
+            let endDate = Date()
+            let startDate = Calendar.current.startOfDay(for: endDate)
+
+            let workouts = try await healthKitService.fetchCyclingWorkouts(from: startDate, to: endDate)
+
+            // Filter out Tailwind-created workouts (skip our own copies)
+            let externalWorkouts = workouts.filter { workout in
+                workout.metadata?["Tailwind"] as? Bool != true
+            }
+
+            if externalWorkouts.isEmpty {
+                await MainActor.run {
+                    isImportingFromHealth = false
+                    healthImportProgress = "No external workouts found today (removed \(removedRides) dupes)."
+                }
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await MainActor.run { healthImportProgress = "" }
+                return
+            }
+
+            var imported = 0
+            var errors = 0
+
+            // Deduplicate by start time (same ride from multiple sources)
+            var seen = Set<Int>()
+            let deduped = externalWorkouts.filter { workout in
+                let key = Int(workout.startDate.timeIntervalSinceReferenceDate / 60)
+                return seen.insert(key).inserted
+            }
+
+            for workout in deduped {
+                do {
+                    let ride = try await healthKitService.importWorkout(workout)
+
+                    await MainActor.run {
+                        rideHistory.saveRide(ride)
+                        if let tss = ride.hrTSS {
+                            trainingLoadManager.addTSS(date: ride.date, tss: tss)
+                        }
+                        imported += 1
+                        healthImportProgress = "Reimported \(imported) of \(deduped.count)..."
+                    }
+                } catch {
+                    print("⚠️ Failed to reimport workout from \(workout.startDate): \(error.localizedDescription)")
+                    errors += 1
+                }
+            }
+
+            await MainActor.run {
+                isImportingFromHealth = false
+                rideHistory.sortByDate()
+                trainingLoadManager.syncFromRides(rideHistory.rides)
+                var msg = "Reimported \(imported) rides"
+                if removedRides > 0 { msg += " (cleaned \(removedRides) dupes)" }
+                if errors > 0 { msg += ", \(errors) failed" }
+                healthImportProgress = msg + "."
+            }
+
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await MainActor.run { healthImportProgress = "" }
+
+        } catch {
+            print("❌ Reimport error: \(error)")
             await MainActor.run {
                 isImportingFromHealth = false
                 healthImportProgress = "Error: \(error.localizedDescription)"
