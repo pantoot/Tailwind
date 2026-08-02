@@ -1,39 +1,68 @@
 import Foundation
 
-/// Finds rides whose stored training stress score can't be reproduced from the
-/// ride's own data.
+/// Finds rides whose stored training stress score understates the work done.
 ///
-/// The check deliberately accepts a score that matches *either* scoring route.
-/// Most of the ride log predates the switch to power-preferred scoring, so those
-/// rides hold an HR-based figure even though they carry power — that's stale, not
-/// corrupt, and rescoring it against an unvalidated FTP would quietly rewrite
-/// training history. Only a score that matches neither route is a real defect.
+/// Two scoring routes are in use and neither is wrong. FIT imports score by time
+/// in heart-rate zones; HealthKit imports score by intensity factor over the whole
+/// ride. A zone-weighted figure legitimately differs from an IF² one, so a
+/// disagreement between them is not a defect and must not be "repaired" — doing so
+/// would rewrite training history to a different methodology.
+///
+/// What *is* a defect:
+///
+/// - **Sparse coverage.** A zone-weighted score sums real sample intervals, so a
+///   heart-rate strap that drops out mid-ride scores only the connected minutes
+///   while the ride's average heart rate still reads normally. A 70-minute effort
+///   lands as 16 TSS. The score isn't a different opinion, it's most of the ride
+///   missing.
+/// - **Unreproducible.** A ride with no zone data whose score matches neither an
+///   HR-based nor a power-based calculation of its own numbers.
 enum TSSAuditService {
+
+    /// Zone data must cover at least this much of the ride for its score to stand.
+    static let minimumZoneCoverage = 0.80
 
     /// How far a stored score may sit from a recomputed one before it's suspect.
     static let tolerance = 0.20
 
-    /// Below this the relative test is meaningless — a 3 TSS cool-down swings
-    /// past 20% on rounding alone.
+    /// Below this the relative test is meaningless — a short ride swings past 20%
+    /// on rounding alone.
     static let minimumAbsoluteDelta: Double = 5
+
+    enum Defect {
+        /// Zone data covered only this fraction of the ride's duration.
+        case sparseHeartRateCoverage(Double)
+        /// Score matches neither scoring route.
+        case unreproducible
+
+        var label: String {
+            switch self {
+            case .sparseHeartRateCoverage(let fraction):
+                return "HR data covered only \(Int(fraction * 100))% of the ride"
+            case .unreproducible:
+                return "matches neither HR nor power"
+            }
+        }
+    }
 
     struct Discrepancy {
         let ride: Ride
         let storedTSS: Double
+        let defect: Defect
         /// What the ride's own heart rate and duration imply, when available.
         let heartRateTSS: Double?
         /// What the ride's own power and the current FTP imply, when available.
         let powerTSS: Double?
 
-        /// The figure to repair to. Heart rate wins because it's what these
-        /// rides were originally scored from, so a repair stays consistent with
-        /// its neighbours instead of silently switching methodology.
+        /// The figure to repair to. Heart rate wins because these rides were
+        /// originally HR-scored, so a repair stays consistent with its neighbours
+        /// rather than silently switching to power against an unvalidated FTP.
         var suggestedTSS: Double? { heartRateTSS ?? powerTSS }
 
         var delta: Double { (suggestedTSS ?? storedTSS) - storedTSS }
     }
 
-    /// Rides whose stored score matches neither scoring route, worst first.
+    /// Rides whose stored score understates the work, worst first.
     static func audit(_ rides: [Ride], profile: UserProfile) -> [Discrepancy] {
         rides
             .compactMap { ride -> Discrepancy? in
@@ -50,23 +79,47 @@ enum TSSAuditService {
                     profile: profile
                 )
 
-                // No way to check this ride — neither threshold is set, or the
-                // ride recorded neither signal.
+                // Nothing to check against — no thresholds set, or no signal recorded.
                 guard fromHR != nil || fromPower != nil else { return nil }
 
-                let plausible = [fromHR, fromPower]
-                    .compactMap { $0 }
-                    .contains { matches(stored: stored, expected: $0) }
-                guard !plausible else { return nil }
+                guard let defect = defect(for: ride, stored: stored, fromHR: fromHR, fromPower: fromPower) else {
+                    return nil
+                }
 
                 return Discrepancy(
                     ride: ride,
                     storedTSS: stored,
+                    defect: defect,
                     heartRateTSS: fromHR,
                     powerTSS: fromPower
                 )
             }
             .sorted { abs($0.delta) > abs($1.delta) }
+    }
+
+    private static func defect(
+        for ride: Ride,
+        stored: Double,
+        fromHR: Double?,
+        fromPower: Double?
+    ) -> Defect? {
+        // A zone-scored ride is judged on how much of itself it actually measured,
+        // not on whether it agrees with a different formula.
+        if let zones = ride.timeInZone, ride.duration > 0 {
+            let coverage = zones.totalSeconds / ride.duration
+            guard coverage < minimumZoneCoverage else { return nil }
+
+            // Only worth flagging if rescoring would meaningfully raise it.
+            guard let suggested = fromHR ?? fromPower,
+                  suggested - stored > minimumAbsoluteDelta else { return nil }
+
+            return .sparseHeartRateCoverage(coverage)
+        }
+
+        let plausible = [fromHR, fromPower]
+            .compactMap { $0 }
+            .contains { matches(stored: stored, expected: $0) }
+        return plausible ? nil : .unreproducible
     }
 
     private static func matches(stored: Double, expected: Double) -> Bool {

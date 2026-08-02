@@ -471,7 +471,7 @@ struct SettingsTabView: View {
                 Button("Cancel", role: .cancel) { }
                 Button("Repair \(suspectTSSCount)") { repairSuspectTSS() }
             } message: {
-                Text("\(suspectTSSCount) rides have a TSS that matches neither their recorded heart rate nor their power. They'll be rescored from their own data — heart rate where available, since that's what they were originally scored from. Rides that are merely still HR-scored despite having power are left alone; rescoring those needs a validated FTP.")
+                Text("\(suspectTSSCount) rides scored less work than they did — mostly rides where the heart-rate strap dropped out, so only the connected minutes were counted. They'll be rescored across their full duration from their own heart rate. Rides that merely use a different scoring method, or that are still HR-scored despite carrying power, are left alone.")
             }
             .alert("Remove Warm-ups & Cool-downs?", isPresented: $showingRemoveShortRidesConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -729,11 +729,10 @@ struct SettingsTabView: View {
         if !discrepancies.isEmpty {
             print("")
             print("── DATA QUALITY ───────────────────────────────────")
-            print("  \(discrepancies.count) rides have a TSS that matches neither their HR nor their power:")
+            print("  \(discrepancies.count) rides have a TSS that understates the work done:")
             for item in discrepancies {
-                let hr = item.heartRateTSS.map { String(format: "%.0f", $0) } ?? "—"
-                let power = item.powerTSS.map { String(format: "%.0f", $0) } ?? "—"
-                print("  \(formatter.string(from: item.ride.date)): stored \(String(format: "%.0f", item.storedTSS)) | from HR \(hr) | from power \(power)")
+                let suggested = item.suggestedTSS.map { String(format: "%.0f", $0) } ?? "—"
+                print("  \(formatter.string(from: item.ride.date)): stored \(String(format: "%.0f", item.storedTSS)) → \(suggested)  (\(item.defect.label))")
             }
             print("  Fix via Settings → Repair Suspect TSS")
         }
