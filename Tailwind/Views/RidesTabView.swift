@@ -316,7 +316,12 @@ struct RidesTabView: View {
             let endDate = Date()
             let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) ?? endDate
 
-            let workouts = try await healthKitService.fetchCyclingWorkouts(from: startDate, to: endDate)
+            let fetched = try await healthKitService.fetchCyclingWorkouts(from: startDate, to: endDate)
+
+            // Drop Peloton warm-up/cool-down segments, which arrive as their own
+            // cycling workouts and would otherwise count as rides.
+            let workouts = fetched.filter { $0.duration >= Constants.Import.minimumWorkoutDuration }
+            let tooShort = fetched.count - workouts.count
 
             await MainActor.run {
                 healthImportProgress = "Found \(workouts.count) workouts..."
@@ -325,7 +330,9 @@ struct RidesTabView: View {
             if workouts.isEmpty {
                 await MainActor.run {
                     isImportingFromHealth = false
-                    healthImportProgress = "No cycling workouts found in the last \(days) days."
+                    healthImportProgress = tooShort > 0
+                        ? "No rides found in the last \(days) days (\(tooShort) were warm-ups/cool-downs)."
+                        : "No cycling workouts found in the last \(days) days."
                 }
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 await MainActor.run { healthImportProgress = "" }
@@ -370,6 +377,9 @@ struct RidesTabView: View {
                 var message = "Done! Imported \(imported) rides"
                 if skipped > 0 {
                     message += ", skipped \(skipped) duplicates"
+                }
+                if tooShort > 0 {
+                    message += ", skipped \(tooShort) warm-ups/cool-downs"
                 }
                 if errors > 0 {
                     message += ", \(errors) failed"
@@ -425,9 +435,11 @@ struct RidesTabView: View {
 
             let workouts = try await healthKitService.fetchCyclingWorkouts(from: startDate, to: endDate)
 
-            // Filter out Tailwind-created workouts (skip our own copies)
+            // Filter out Tailwind-created workouts (skip our own copies), plus the
+            // warm-up/cool-down segments Peloton writes as separate activities.
             let externalWorkouts = workouts.filter { workout in
                 workout.metadata?["Tailwind"] as? Bool != true
+                    && workout.duration >= Constants.Import.minimumWorkoutDuration
             }
 
             if externalWorkouts.isEmpty {

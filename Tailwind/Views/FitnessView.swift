@@ -516,6 +516,11 @@ struct FitnessView: View {
                 })
 
                 let newWorkouts = workouts.filter { workout in
+                    // Peloton logs each warm-up and cool-down as its own cycling
+                    // workout; those are phases of a ride, not rides.
+                    guard workout.duration >= Constants.Import.minimumWorkoutDuration else {
+                        return false
+                    }
                     let workoutDay = Calendar.current.startOfDay(for: workout.startDate)
                     // Only include if we don't already have a ride on this day
                     return !existingDates.contains(workoutDay)

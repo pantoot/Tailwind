@@ -3,6 +3,19 @@ import CoreLocation
 import Combine
 
 
+/// Where a ride happened.
+///
+/// Route analysis must never compare a trainer ride to a road ride: a 20-minute
+/// Peloton spin and a 55-minute climb can both cover 7 miles, but averaging them
+/// together describes the mix of rides rather than the rider.
+enum RideEnvironment: String, Codable {
+    case indoor
+    case outdoor
+    /// Neither GPS nor the ride's notes say which — most often a manual entry.
+    /// Kept distinct so ambiguous rides never contaminate a known cluster.
+    case unknown
+}
+
 struct Ride: Identifiable, Codable {
     let id: UUID
     let date: Date
@@ -143,6 +156,64 @@ struct Ride: Identifiable, Codable {
     var hasPowerOrCadence: Bool {
         averagePower != nil || averageCadence != nil
     }
+
+    /// Best available power figure — the ride summary, falling back to the value
+    /// the creatine pass computed from 1Hz samples.
+    var bestKnownAveragePower: Double? {
+        if let power = averagePower, power > 0 { return power }
+        if let power = creatineMetrics?.averagePower, power > 0 { return power }
+        return nil
+    }
+
+    /// Indoor or outdoor, inferred from the strongest signal available.
+    var environment: RideEnvironment {
+        // GPS is definitive — a trainer can't record a route.
+        if let coordinates = routeCoordinates, !coordinates.isEmpty { return .outdoor }
+
+        guard let notes = notes?.lowercased() else { return .unknown }
+        if notes.contains("indoor") || notes.contains("peloton") { return .indoor }
+        if notes.contains("magene") || notes.contains("apple workouts") { return .outdoor }
+        return .unknown
+    }
+
+    /// Copy with heart rate and its recalculated stress score replaced. Rides are
+    /// immutable, and restating all seventeen fields to change three invites drift.
+    func replacingHeartRate(average: Double, max: Int, hrTSS: Double?) -> Ride {
+        copy(averageHeartRate: average, maxHeartRate: max, hrTSS: hrTSS)
+    }
+
+    /// Copy with only the training stress score replaced.
+    func replacingTSS(_ tss: Double) -> Ride {
+        copy(hrTSS: tss)
+    }
+
+    private func copy(
+        averageHeartRate: Double? = nil,
+        maxHeartRate: Int? = nil,
+        hrTSS: Double? = nil
+    ) -> Ride {
+        Ride(
+            id: id,
+            date: date,
+            duration: duration,
+            distance: distance,
+            averageSpeed: averageSpeed,
+            maxSpeed: maxSpeed,
+            averageHeartRate: averageHeartRate ?? self.averageHeartRate,
+            maxHeartRate: maxHeartRate ?? self.maxHeartRate,
+            calories: calories,
+            averagePower: averagePower,
+            averageCadence: averageCadence,
+            elevationGain: elevationGain,
+            routeCoordinates: routeCoordinates,
+            notes: notes,
+            bikeName: bikeName,
+            bikeType: bikeType,
+            timeInZone: timeInZone,
+            hrTSS: hrTSS ?? self.hrTSS,
+            creatineMetrics: creatineMetrics
+        )
+    }
 }
 
 // Storage for rides
@@ -188,6 +259,28 @@ class RideHistory: ObservableObject {
             print("🗑️ Removed \(removed) rides for \(date)")
         }
         return removed
+    }
+
+    /// Rides too short to be a session — Peloton warm-up and cool-down segments
+    /// that were imported as standalone rides before they were filtered out.
+    func shortRides(shorterThan minimumDuration: TimeInterval) -> [Ride] {
+        rides.filter { $0.duration < minimumDuration }
+    }
+
+    /// Removes those warm-up/cool-down entries. Returns the count removed so the
+    /// caller can report it and resync training load.
+    @discardableResult
+    func removeShortRides(shorterThan minimumDuration: TimeInterval) -> Int {
+        let doomed = shortRides(shorterThan: minimumDuration)
+        guard !doomed.isEmpty else { return 0 }
+
+        for ride in doomed {
+            print("🗑️ Removing short ride: \(ride.formattedDate) (\(ride.formattedDuration), \(String(format: "%.1f", ride.distance)) mi)")
+        }
+
+        rides = rides.filter { $0.duration >= minimumDuration }
+        persistRides()
+        return doomed.count
     }
 
     // Clear all rides (for re-import with new settings)

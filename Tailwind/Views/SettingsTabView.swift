@@ -22,6 +22,7 @@ struct SettingsTabView: View {
 
     // Clear all rides
     @State private var showingClearAllConfirmation = false
+    @State private var showingRemoveShortRidesConfirmation = false
 
     // Creatine reanalysis
     @State private var isReanalyzing = false
@@ -51,6 +52,12 @@ struct SettingsTabView: View {
         _lactateThresholdHR = State(initialValue: profile.lactateThresholdHR.map { String($0) } ?? "")
         _maxHeartRate = State(initialValue: profile.maxHeartRate.map { String($0) } ?? "")
         _ftpWatts = State(initialValue: profile.ftp.map { String($0) } ?? "")
+    }
+
+    /// Warm-up and cool-down segments still sitting in history from before the
+    /// import filter existed.
+    private var shortRideCount: Int {
+        rideHistory.shortRides(shorterThan: Constants.Import.minimumWorkoutDuration).count
     }
 
     var body: some View {
@@ -237,7 +244,9 @@ struct SettingsTabView: View {
                             if isRecalculatingTSS {
                                 ProgressView()
                             } else {
-                                let count = rideHistory.rides.filter { $0.hrTSS == nil }.count
+                                // Must match recalculateMissingTSS's filter, or the
+                                // badge promises different work than the button does.
+                                let count = rideHistory.rides.filter { $0.hrTSS == nil || $0.averageHeartRate == 0 }.count
                                 Text("\(count) rides")
                                     .foregroundStyle(.secondary)
                             }
@@ -277,6 +286,18 @@ struct SettingsTabView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    Button(role: .destructive) {
+                        showingRemoveShortRidesConfirmation = true
+                    } label: {
+                        HStack {
+                            Label("Remove Warm-ups & Cool-downs", systemImage: "scissors")
+                            Spacer()
+                            Text("\(shortRideCount) rides")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(shortRideCount == 0)
 
                     Button(role: .destructive) {
                         showingClearAllConfirmation = true
@@ -420,6 +441,15 @@ struct SettingsTabView: View {
                 Text(duplicatesRemoved > 0
                     ? "Removed \(duplicatesRemoved) duplicate rides. \(rideHistory.rides.count) rides remaining."
                     : "No duplicate rides found.")
+            }
+            .alert("Remove Warm-ups & Cool-downs?", isPresented: $showingRemoveShortRidesConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Remove \(shortRideCount)", role: .destructive) {
+                    rideHistory.removeShortRides(shorterThan: Constants.Import.minimumWorkoutDuration)
+                    trainingLoadManager.syncFromRides(rideHistory.rides)
+                }
+            } message: {
+                Text("This will delete \(shortRideCount) rides shorter than \(Int(Constants.Import.minimumWorkoutDuration / 60)) minutes — Peloton warm-up and cool-down segments imported as standalone rides. They inflate your ride count and training load. Training load will be recalculated.")
             }
             .alert("Clear All Rides?", isPresented: $showingClearAllConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -574,40 +604,33 @@ struct SettingsTabView: View {
             }
         }
         print("")
-        print("── ROUTE ANALYSIS (matching distances ±0.5 mi) ────")
-        // Group all rides by rounded distance to find repeated routes
-        let allRides = rideHistory.rides.filter { $0.duration >= 15 * 60 } // skip cooldowns
-        let routeGroups: [String: [Ride]] = Dictionary(grouping: allRides) { ride in
-            // Round to nearest 0.5 mile to catch same-route variations
-            let rounded = (ride.distance * 2).rounded() / 2
-            return String(format: "%.1f", rounded)
+        print("── ROUTE ANALYSIS (same environment, distance ±0.5 mi, duration ±15%) ────")
+        let clusters = RouteClusteringService.cluster(rideHistory.rides)
+
+        if clusters.isEmpty {
+            print("  No routes with \(RouteClusteringService.minimumRidesPerRoute)+ comparable rides found")
         }
 
-        // Filter to routes ridden 3+ times, sort by frequency
-        let repeatedRoutes = routeGroups
-            .filter { $0.value.count >= 3 }
-            .sorted { $0.value.count > $1.value.count }
-
-        if repeatedRoutes.isEmpty {
-            print("  No routes with 3+ rides found")
-        }
-
-        for (distKey, rides) in repeatedRoutes {
-            let sorted = rides.sorted { $0.date < $1.date }
+        for cluster in clusters {
+            let sorted = cluster.chronological
             print("")
-            print("  📍 ~\(distKey) mi route (\(sorted.count) rides)")
+            print("  📍 \(cluster.label) — \(sorted.count) rides")
             print("  ────────────────────────────────────────────────")
             print("  Date         Speed    HR      TSS    Duration  Power")
 
             for ride in sorted {
                 let hrStr = ride.averageHeartRate > 0 ? String(format: "%3.0f bpm", ride.averageHeartRate) : "  — bpm"
                 let powerStr = ride.creatineMetrics.map { String(format: "%3.0fW avg", $0.averagePower) } ?? "   —"
-                print("  \(formatter.string(from: ride.date))    \(String(format: "%4.1f", ride.averageSpeed)) mph  \(hrStr)  \(String(format: "%3.0f", ride.hrTSS ?? 0))    \(ride.formattedDuration)    \(powerStr)")
+                let tssStr = ride.hrTSS.map { String(format: "%3.0f", $0) } ?? "  —"
+                print("  \(formatter.string(from: ride.date))    \(String(format: "%4.1f", ride.averageSpeed)) mph  \(hrStr)  \(tssStr)    \(ride.formattedDuration)    \(powerStr)")
             }
 
-            // Trend analysis for this route
-            let firstThird = Array(sorted.prefix(sorted.count / 3 + 1))
-            let lastThird = Array(sorted.suffix(sorted.count / 3 + 1))
+            // Trend analysis for this route. Thirds must not overlap — with the old
+            // count/3 + 1 window a 3-ride route shared its middle ride between both
+            // ends, which pulled every short route toward "no change".
+            let window = max(1, sorted.count / 3)
+            let firstThird = Array(sorted.prefix(window))
+            let lastThird = Array(sorted.suffix(window))
 
             let earlySpeed = firstThird.reduce(0) { $0 + $1.averageSpeed } / Double(firstThird.count)
             let lateSpeed = lastThird.reduce(0) { $0 + $1.averageSpeed } / Double(lastThird.count)
@@ -619,8 +642,8 @@ struct SettingsTabView: View {
             let lateAvgHR = lateHR.isEmpty ? 0 : lateHR.reduce(0) { $0 + $1.averageHeartRate } / Double(lateHR.count)
             let hrDelta = lateAvgHR - earlyAvgHR
 
-            let earlyPower = firstThird.compactMap { $0.creatineMetrics?.averagePower }.filter { $0 > 0 }
-            let latePower = lastThird.compactMap { $0.creatineMetrics?.averagePower }.filter { $0 > 0 }
+            let earlyPower = firstThird.compactMap { $0.bestKnownAveragePower }
+            let latePower = lastThird.compactMap { $0.bestKnownAveragePower }
             let earlyAvgPower = earlyPower.isEmpty ? 0 : earlyPower.reduce(0, +) / Double(earlyPower.count)
             let lateAvgPower = latePower.isEmpty ? 0 : latePower.reduce(0, +) / Double(latePower.count)
 
@@ -635,13 +658,26 @@ struct SettingsTabView: View {
                 print("    Power: \(String(format: "%.0f", earlyAvgPower)) → \(String(format: "%.0f", lateAvgPower))W (\(String(format: "%+.0f", powerDelta))) \(powerDelta > 3 ? "⚡ STRONGER" : powerDelta < -3 ? "📉 LOWER" : "➡️ SAME")")
             }
 
-            // Efficiency: speed per HR beat (higher = fitter)
+            // Efficiency: output per heartbeat (higher = fitter). On a trainer the
+            // speed shown is computed back from power, so mph/bpm just restates
+            // W/bpm with extra noise — use watts directly when they're available.
             if earlyAvgHR > 0 && lateAvgHR > 0 {
-                let earlyEff = earlySpeed / earlyAvgHR
-                let lateEff = lateSpeed / lateAvgHR
+                let usePower = cluster.prefersPowerEfficiency && earlyAvgPower > 0 && lateAvgPower > 0
+                let earlyOutput = usePower ? earlyAvgPower : earlySpeed
+                let lateOutput = usePower ? lateAvgPower : lateSpeed
+                let unit = usePower ? "W/bpm" : "mph/bpm"
+
+                let earlyEff = earlyOutput / earlyAvgHR
+                let lateEff = lateOutput / lateAvgHR
                 let effDelta = ((lateEff - earlyEff) / earlyEff) * 100
-                print("    Efficiency (mph/bpm): \(String(format: "%.3f", earlyEff)) → \(String(format: "%.3f", lateEff)) (\(String(format: "%+.1f%%", effDelta))) \(effDelta > 1 ? "📈 IMPROVING" : effDelta < -1 ? "📉 DECLINING" : "➡️ STABLE")")
+                print("    Efficiency (\(unit)): \(String(format: "%.3f", earlyEff)) → \(String(format: "%.3f", lateEff)) (\(String(format: "%+.1f%%", effDelta))) \(effDelta > 1 ? "📈 IMPROVING" : effDelta < -1 ? "📉 DECLINING" : "➡️ STABLE")")
             }
+        }
+
+        let excluded = RouteClusteringService.shortRides(in: rideHistory.rides)
+        if !excluded.isEmpty {
+            print("")
+            print("  (\(excluded.count) rides under \(Int(RouteClusteringService.minimumRideDuration / 60)) min excluded — too short to be a route)")
         }
 
         print("")
@@ -820,51 +856,60 @@ struct SettingsTabView: View {
             tssRecalcProgress = "Checking \(ridesToFix.count) rides for HR data..."
         }
 
-        var updated = 0
+        let userProfile = UserProfile.load()
+        var updatedFromHR = 0
+        var updatedFromPower = 0
+
         for (i, ride) in ridesToFix.enumerated() {
             await MainActor.run {
                 tssRecalcProgress = "Checking \(i + 1) of \(ridesToFix.count)..."
             }
 
             if let hrData = await healthKitService.reanalyzeHR(for: ride) {
-                let updatedRide = Ride(
-                    id: ride.id,
-                    date: ride.date,
-                    duration: ride.duration,
-                    distance: ride.distance,
-                    averageSpeed: ride.averageSpeed,
-                    maxSpeed: ride.maxSpeed,
-                    averageHeartRate: hrData.averageHR,
-                    maxHeartRate: Int(hrData.maxHR),
-                    calories: ride.calories,
-                    averagePower: ride.averagePower,
-                    averageCadence: ride.averageCadence,
-                    elevationGain: ride.elevationGain,
-                    routeCoordinates: ride.routeCoordinates,
-                    notes: ride.notes,
-                    bikeName: ride.bikeName,
-                    bikeType: ride.bikeType,
-                    timeInZone: ride.timeInZone,
-                    hrTSS: hrData.hrTSS,
-                    creatineMetrics: ride.creatineMetrics
+                let updatedRide = ride.replacingHeartRate(
+                    average: hrData.averageHR,
+                    max: Int(hrData.maxHR),
+                    hrTSS: hrData.hrTSS
                 )
                 await MainActor.run {
                     rideHistory.updateRide(ride.id, with: updatedRide)
                 }
-                updated += 1
+                updatedFromHR += 1
                 print("📊 TSS recalc \(ride.formattedDate): avgHR=\(String(format: "%.0f", hrData.averageHR)), TSS=\(String(format: "%.1f", hrData.hrTSS ?? 0))")
+            } else if ride.hrTSS == nil,
+                      let powerTSS = HealthKitService.calculateTSS(
+                        duration: ride.duration,
+                        averagePower: ride.bestKnownAveragePower,
+                        averageHeartRate: nil,
+                        profile: userProfile
+                      ) {
+                // HealthKit has no heart rate for this ride — a class ridden without
+                // a strap. Power still scores it. Without this the ride keeps a nil
+                // TSS permanently and contributes nothing to training load, which
+                // reads as a rest day that never happened.
+                let updatedRide = ride.replacingTSS(powerTSS)
+                await MainActor.run {
+                    rideHistory.updateRide(ride.id, with: updatedRide)
+                }
+                updatedFromPower += 1
+                print("⚡ TSS from power \(ride.formattedDate): TSS=\(String(format: "%.1f", powerTSS)) (no HR in HealthKit)")
             }
 
             try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
         }
 
+        let updated = updatedFromHR + updatedFromPower
         await MainActor.run {
             isRecalculatingTSS = false
             if updated > 0 {
-                tssRecalcProgress = "Done! Recalculated TSS for \(updated) rides."
+                var message = "Done! Updated \(updated) rides"
+                if updatedFromPower > 0 {
+                    message += " (\(updatedFromPower) scored from power, no HR available)"
+                }
+                tssRecalcProgress = message + "."
                 trainingLoadManager.syncFromRides(rideHistory.rides)
             } else {
-                tssRecalcProgress = "No HR data found in HealthKit for \(ridesToFix.count) rides."
+                tssRecalcProgress = "No HR or power data found for \(ridesToFix.count) rides."
             }
         }
 
