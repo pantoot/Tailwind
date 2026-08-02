@@ -355,6 +355,42 @@ class HealthKitService: ObservableObject {
         }
     }
 
+    // MARK: - Training Stress Score
+
+    /// Training Stress Score for a ride, preferring power over heart rate.
+    ///
+    /// Heart-rate TSS systematically understates load as cardiac efficiency improves —
+    /// the same effort scores lower over time because HR drops at a given power. When
+    /// power and FTP are both available they give a stable, effort-accurate figure, so
+    /// they win. Falls back to heart rate, then to nil when neither pair is available.
+    ///
+    /// TSS = (seconds × IF²) / 36, where IF is power/FTP or HR/LTHR.
+    static func calculateTSS(
+        duration: TimeInterval,
+        averagePower: Double?,
+        averageHeartRate: Double?,
+        profile: UserProfile
+    ) -> Double? {
+        guard duration > 0 else { return nil }
+
+        if let power = averagePower, power > 0, let ftp = profile.ftp, ftp > 0 {
+            let intensityFactor = power / Double(ftp)
+            let tss = (duration * intensityFactor * intensityFactor) / 36.0
+            print("📊 Power TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", power))W / FTP \(ftp), IF=\(String(format: "%.2f", intensityFactor)))")
+            return tss
+        }
+
+        if let hr = averageHeartRate, hr > 0, let lthr = profile.lactateThresholdHR {
+            let intensityFactor = hr / Double(lthr)
+            let tss = (duration * intensityFactor * intensityFactor) / 36.0
+            print("📊 HR TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", hr))bpm / LTHR \(lthr), IF=\(String(format: "%.2f", intensityFactor)))")
+            return tss
+        }
+
+        print("⚠️ TSS not calculated — needs power+FTP or HR+LTHR")
+        return nil
+    }
+
     // Import a HealthKit workout as a Ride
     // Set writeActiveEnergy: true to also write a standalone Active Energy sample (helps with Move ring)
     func importWorkout(_ workout: HKWorkout, writeActiveEnergy: Bool = true) async throws -> Ride {
@@ -388,21 +424,6 @@ class HealthKitService: ObservableObject {
         let averageSpeed = duration > 0 ? (distance / duration) * 3600 : 0.0 // mph
         let maxSpeed = (workout.metadata?["MaxSpeed"] as? Double) ?? averageSpeed
 
-        // Calculate simplified TSS based on average HR and duration using user's threshold HR
-        let hrTSS: Double?
-        if heartRateData.average > 0 && duration > 0,
-           let thresholdHR = userProfile.lactateThresholdHR {
-            let hrIntensity = heartRateData.average / Double(thresholdHR)
-            let hours = duration / 3600.0
-            hrTSS = hours * hrIntensity * hrIntensity * 100 // TSS = hours × IF² × 100
-            print("📊 Calculated TSS: \(String(format: "%.1f", hrTSS ?? 0)) (HR: \(String(format: "%.0f", heartRateData.average)) / LTHR: \(thresholdHR))")
-        } else {
-            hrTSS = nil
-            if userProfile.lactateThresholdHR == nil {
-                print("⚠️ No threshold HR in profile - TSS not calculated")
-            }
-        }
-
         // Check if indoor workout (Peloton, etc.)
         let isIndoor = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool ?? false
         let workoutSource = isIndoor ? "Indoor Cycling" : "Apple Workouts"
@@ -426,6 +447,15 @@ class HealthKitService: ObservableObject {
         } else {
             creatineMetrics = nil
         }
+
+        // Computed after the power analysis so it can prefer power over heart rate.
+        // Peloton and Zwift rides carry power, which doesn't drift as fitness improves.
+        let hrTSS = Self.calculateTSS(
+            duration: duration,
+            averagePower: creatineMetrics?.averagePower,
+            averageHeartRate: heartRateData.average,
+            profile: userProfile
+        )
 
         let ride = Ride(
             id: UUID(),
@@ -591,19 +621,12 @@ class HealthKitService: ObservableObject {
 
         // Calculate TSS from power if FTP is set, otherwise from HR
         let userProfile = UserProfile.load()
-        let hrTSS: Double?
-        if let avgPower = averagePower, let ftp = userProfile.ftp, ftp > 0 {
-            // Power-based TSS: (seconds × (avgPower/FTP)²) / 36
-            let intensityFactor = avgPower / Double(ftp)
-            hrTSS = (duration * intensityFactor * intensityFactor) / 36.0
-            print("📊 Power TSS: \(String(format: "%.1f", hrTSS!)) (IF=\(String(format: "%.2f", intensityFactor)))")
-        } else if let avgHR = averageHeartRate, avgHR > 0,
-                  let lthr = userProfile.lactateThresholdHR {
-            let hrIntensity = avgHR / Double(lthr)
-            hrTSS = (duration / 3600.0) * hrIntensity * hrIntensity * 100
-        } else {
-            hrTSS = nil
-        }
+        let hrTSS = Self.calculateTSS(
+            duration: duration,
+            averagePower: averagePower,
+            averageHeartRate: averageHeartRate,
+            profile: userProfile
+        )
 
         // Build HealthKit workout
         let configuration = HKWorkoutConfiguration()
@@ -1415,16 +1438,15 @@ class HealthKitService: ObservableObject {
 
             guard avgHR > 0 else { return nil }
 
+            // Pass any known power so a ride with power keeps its power-based TSS.
+            // Backfilling heart rate must not downgrade an already-accurate figure.
             let userProfile = UserProfile.load()
-            let hrTSS: Double?
-            if let thresholdHR = userProfile.lactateThresholdHR, ride.duration > 0 {
-                let hrIntensity = avgHR / Double(thresholdHR)
-                let hours = ride.duration / 3600.0
-                hrTSS = hours * hrIntensity * hrIntensity * 100
-                print("📊 Recalculated TSS: \(String(format: "%.1f", hrTSS!)) (HR: \(String(format: "%.0f", avgHR)) / LTHR: \(thresholdHR))")
-            } else {
-                hrTSS = nil
-            }
+            let hrTSS = Self.calculateTSS(
+                duration: ride.duration,
+                averagePower: ride.averagePower ?? ride.creatineMetrics?.averagePower,
+                averageHeartRate: avgHR,
+                profile: userProfile
+            )
 
             return (averageHR: avgHR, maxHR: maxHR, hrTSS: hrTSS)
         } catch {
