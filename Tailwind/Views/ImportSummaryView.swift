@@ -41,7 +41,8 @@ struct ImportSummaryView: View {
                         trainingLoadSection
                     }
 
-                    // Map preview
+                    // Map preview. The ride arrives straight from the importer, so its
+                    // track is still in memory and needs no load from the track store.
                     if let coordinates = ride.routeCoordinates, !coordinates.isEmpty {
                         mapSection(coordinates)
                     }

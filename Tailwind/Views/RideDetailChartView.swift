@@ -5,12 +5,16 @@ import MapKit
 // Simplified chart view for individual ride details
 struct RideDetailChartView: View {
     let ride: Ride
+    @EnvironmentObject var rideHistory: RideHistory
+
+    /// Loaded when the view appears — GPS tracks live outside the ride record.
+    @State private var track: [Ride.Coordinate]?
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 // Route map if available
-                if let coordinates = ride.routeCoordinates, !coordinates.isEmpty {
+                if let coordinates = track, !coordinates.isEmpty {
                     routeMapView(coordinates: coordinates)
                 }
 
@@ -25,6 +29,7 @@ struct RideDetailChartView: View {
             .padding()
         }
         .navigationTitle("Ride Analysis")
+        .task { track = rideHistory.coordinates(for: ride) }
         .navigationBarTitleDisplayMode(.inline)
     }
 

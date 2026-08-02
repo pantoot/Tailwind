@@ -35,7 +35,7 @@ struct RideDetailView: View {
                     .padding(.top)
 
                     // Chart view (show if we have route coordinates or time in zone data)
-                    if (ride.routeCoordinates != nil && !ride.routeCoordinates!.isEmpty) || ride.timeInZone != nil {
+                    if ride.hasRouteData || ride.timeInZone != nil {
                         NavigationLink(destination: RideDetailChartView(ride: ride)) {
                             HStack {
                                 Image(systemName: "chart.xyaxis.line")

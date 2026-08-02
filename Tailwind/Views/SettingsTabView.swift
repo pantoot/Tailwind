@@ -850,6 +850,7 @@ struct SettingsTabView: View {
                     averageCadence: ride.averageCadence,
                     elevationGain: ride.elevationGain,
                     routeCoordinates: ride.routeCoordinates,
+                    routePointCount: ride.routePointCount,
                     notes: ride.notes,
                     bikeName: ride.bikeName,
                     bikeType: ride.bikeType,

@@ -573,7 +573,7 @@ class HealthKitService: ObservableObject {
         // Create a workout (Move ring respects workouts, not standalone samples)
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .cycling
-        configuration.locationType = (ride.routeCoordinates?.isEmpty ?? true) ? .indoor : .outdoor
+        configuration.locationType = ride.hasRouteData ? .outdoor : .indoor
 
         let builder = HKWorkoutBuilder(
             healthStore: healthStore,
@@ -606,7 +606,7 @@ class HealthKitService: ObservableObject {
 
         // Add metadata
         try await builder.addMetadata([
-            HKMetadataKeyIndoorWorkout: (ride.routeCoordinates?.isEmpty ?? true),
+            HKMetadataKeyIndoorWorkout: !ride.hasRouteData,
             "Tailwind": true,
             "MoveRingFix": true
         ])

@@ -37,7 +37,18 @@ struct Ride: Identifiable, Codable {
     /// across rides at similar temperatures — heat inflates it independently of
     /// fitness. Nil when the source recorded none (all indoor rides, older imports).
     let averageTemperatureCelsius: Double?
-    let routeCoordinates: [Coordinate]? // GPS track
+    /// The GPS track. Present when a ride is first imported and whenever something
+    /// explicitly loads it; nil after a plain read from disk, because tracks live in
+    /// `RouteCoordinateStore` and are fetched only when a map needs them.
+    ///
+    /// Use `hasRouteData` rather than checking this for emptiness — a nil track means
+    /// "not loaded", which is not the same as "no route".
+    let routeCoordinates: [Coordinate]?
+
+    /// How many GPS points the ride recorded. Persisted with the ride so indoor and
+    /// outdoor can be told apart without touching the track files.
+    let routePointCount: Int
+
     let notes: String?
 
     // Bike info
@@ -85,6 +96,7 @@ struct Ride: Identifiable, Codable {
          elevationGain: Double? = nil,
          averageTemperatureCelsius: Double? = nil,
          routeCoordinates: [Coordinate]? = nil,
+         routePointCount: Int? = nil,
          notes: String? = nil,
          bikeName: String? = nil,
          bikeType: String? = nil,
@@ -105,12 +117,86 @@ struct Ride: Identifiable, Codable {
         self.elevationGain = elevationGain
         self.averageTemperatureCelsius = averageTemperatureCelsius
         self.routeCoordinates = routeCoordinates
+        // Falls back to the track's own length, so callers that pass a track don't
+        // have to keep a count in sync with it.
+        self.routePointCount = routePointCount ?? routeCoordinates?.count ?? 0
         self.notes = notes
         self.bikeName = bikeName
         self.bikeType = bikeType
         self.timeInZone = timeInZone
         self.hrTSS = hrTSS
         self.creatineMetrics = creatineMetrics
+    }
+
+    // MARK: - Codable
+
+    /// `routeCoordinates` is deliberately absent from the persisted keys — tracks
+    /// belong to `RouteCoordinateStore`. It survives here only so a ride can carry a
+    /// freshly imported track to whoever files it away.
+    private enum CodingKeys: String, CodingKey {
+        case id, date, duration, distance, averageSpeed, maxSpeed
+        case averageHeartRate, maxHeartRate, calories
+        case averagePower, averageCadence, elevationGain, averageTemperatureCelsius
+        case routePointCount, notes, bikeName, bikeType, timeInZone, hrTSS, creatineMetrics
+        /// Only read, never written: the key rides used before tracks moved out.
+        case routeCoordinates
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        id = try container.decode(UUID.self, forKey: .id)
+        date = try container.decode(Date.self, forKey: .date)
+        duration = try container.decode(TimeInterval.self, forKey: .duration)
+        distance = try container.decode(Double.self, forKey: .distance)
+        averageSpeed = try container.decode(Double.self, forKey: .averageSpeed)
+        maxSpeed = try container.decode(Double.self, forKey: .maxSpeed)
+        averageHeartRate = try container.decode(Double.self, forKey: .averageHeartRate)
+        maxHeartRate = try container.decode(Int.self, forKey: .maxHeartRate)
+        calories = try container.decode(Double.self, forKey: .calories)
+        averagePower = try container.decodeIfPresent(Double.self, forKey: .averagePower)
+        averageCadence = try container.decodeIfPresent(Double.self, forKey: .averageCadence)
+        elevationGain = try container.decodeIfPresent(Double.self, forKey: .elevationGain)
+        averageTemperatureCelsius = try container.decodeIfPresent(Double.self, forKey: .averageTemperatureCelsius)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        bikeName = try container.decodeIfPresent(String.self, forKey: .bikeName)
+        bikeType = try container.decodeIfPresent(String.self, forKey: .bikeType)
+        timeInZone = try container.decodeIfPresent(TimeInZone.self, forKey: .timeInZone)
+        hrTSS = try container.decodeIfPresent(Double.self, forKey: .hrTSS)
+        creatineMetrics = try container.decodeIfPresent(CreatineMetrics.self, forKey: .creatineMetrics)
+
+        // Rides written before tracks moved out still carry one inline. Keep it so
+        // the migration can file it away, and derive the count from it.
+        let inlineTrack = try container.decodeIfPresent([Coordinate].self, forKey: .routeCoordinates)
+        routeCoordinates = inlineTrack
+        routePointCount = try container.decodeIfPresent(Int.self, forKey: .routePointCount)
+            ?? inlineTrack?.count
+            ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(id, forKey: .id)
+        try container.encode(date, forKey: .date)
+        try container.encode(duration, forKey: .duration)
+        try container.encode(distance, forKey: .distance)
+        try container.encode(averageSpeed, forKey: .averageSpeed)
+        try container.encode(maxSpeed, forKey: .maxSpeed)
+        try container.encode(averageHeartRate, forKey: .averageHeartRate)
+        try container.encode(maxHeartRate, forKey: .maxHeartRate)
+        try container.encode(calories, forKey: .calories)
+        try container.encodeIfPresent(averagePower, forKey: .averagePower)
+        try container.encodeIfPresent(averageCadence, forKey: .averageCadence)
+        try container.encodeIfPresent(elevationGain, forKey: .elevationGain)
+        try container.encodeIfPresent(averageTemperatureCelsius, forKey: .averageTemperatureCelsius)
+        try container.encode(routePointCount, forKey: .routePointCount)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(bikeName, forKey: .bikeName)
+        try container.encodeIfPresent(bikeType, forKey: .bikeType)
+        try container.encodeIfPresent(timeInZone, forKey: .timeInZone)
+        try container.encodeIfPresent(hrTSS, forKey: .hrTSS)
+        try container.encodeIfPresent(creatineMetrics, forKey: .creatineMetrics)
     }
 
     // Formatted values
@@ -175,10 +261,14 @@ struct Ride: Identifiable, Codable {
         averageTemperatureCelsius.map { $0 * 9 / 5 + 32 }
     }
 
+    /// Whether the ride recorded a GPS track. Answers from the ride record alone, so
+    /// it stays correct whether or not the track itself has been loaded.
+    var hasRouteData: Bool { routePointCount > 0 }
+
     /// Indoor or outdoor, inferred from the strongest signal available.
     var environment: RideEnvironment {
         // GPS is definitive — a trainer can't record a route.
-        if let coordinates = routeCoordinates, !coordinates.isEmpty { return .outdoor }
+        if hasRouteData { return .outdoor }
 
         guard let notes = notes?.lowercased() else { return .unknown }
         if notes.contains("indoor") || notes.contains("peloton") { return .indoor }
@@ -217,6 +307,7 @@ struct Ride: Identifiable, Codable {
             elevationGain: elevationGain,
             averageTemperatureCelsius: averageTemperatureCelsius,
             routeCoordinates: routeCoordinates,
+            routePointCount: routePointCount,
             notes: notes,
             bikeName: bikeName,
             bikeType: bikeType,
@@ -239,12 +330,55 @@ class RideHistory: ObservableObject {
     /// because the old silent version quietly ate the back of the training history.
     private let maxRides = 1000
 
-    init(store: RideStore = RideStore()) {
+    private let trackStore: RouteCoordinateStore
+
+    init(store: RideStore = RideStore(), trackStore: RouteCoordinateStore = RouteCoordinateStore()) {
         self.store = store
+        self.trackStore = trackStore
         rides = store.load()
+        migrateInlineTracks()
+    }
+
+    /// The GPS track for a ride, read from disk on demand.
+    ///
+    /// Tracks are not held in memory with the ride log — that's the whole point of
+    /// moving them out — so map views ask for them when they're about to draw.
+    func coordinates(for ride: Ride) -> [Ride.Coordinate]? {
+        if let loaded = ride.routeCoordinates, !loaded.isEmpty { return loaded }
+        guard ride.hasRouteData else { return nil }
+        return trackStore.coordinates(for: ride.id)
+    }
+
+    /// Moves any track still stored inline in the ride log out to its own file.
+    /// Runs once; afterwards the ride log holds only a point count.
+    private func migrateInlineTracks() {
+        let inline = rides.filter { ($0.routeCoordinates?.isEmpty == false) }
+        guard !inline.isEmpty else { return }
+
+        print("📦 Moving \(inline.count) GPS tracks out of the ride log...")
+        var moved = 0
+        for ride in inline {
+            do {
+                try trackStore.save(ride.routeCoordinates, for: ride.id)
+                moved += 1
+            } catch {
+                print("❌ ERROR: Could not store track for \(ride.formattedDate): \(error.localizedDescription)")
+            }
+        }
+
+        // Only rewrite the log once every track is safely filed, so a failure
+        // partway through leaves the inline copies intact to retry next launch.
+        guard moved == inline.count else {
+            print("⚠️ Kept tracks inline — \(inline.count - moved) could not be written")
+            return
+        }
+
+        persistRides()
+        print("✅ Moved \(moved) GPS tracks to \(RouteCoordinateStore.directoryName)")
     }
 
     func saveRide(_ ride: Ride) {
+        storeTrack(for: ride)
         rides.insert(ride, at: 0) // Add to beginning (most recent first)
 
         if rides.count > maxRides {
@@ -381,7 +515,7 @@ class RideHistory: ObservableObject {
                 if ride.hrTSS != nil { score += 20 }
                 if ride.timeInZone != nil { score += 15 }
                 if ride.calories > 0 { score += 10 }
-                if ride.routeCoordinates != nil && !ride.routeCoordinates!.isEmpty { score += 15 }
+                if ride.hasRouteData { score += 15 }
                 if ride.elevationGain != nil && ride.elevationGain! > 0 { score += 10 }
                 if ride.bikeName != nil { score += 5 }
                 if ride.notes != nil && !ride.notes!.isEmpty { score += 5 }
@@ -530,12 +664,30 @@ class RideHistory: ObservableObject {
         return await fixCalories(for: nil, userProfile: userProfile, healthKitService: healthKitService)
     }
 
+    /// Files a freshly imported ride's track away, if it carries one.
+    private func storeTrack(for ride: Ride) {
+        guard let track = ride.routeCoordinates, !track.isEmpty else { return }
+        do {
+            try trackStore.save(track, for: ride.id)
+        } catch {
+            print("❌ ERROR: Could not store GPS track for \(ride.formattedDate): \(error.localizedDescription)")
+        }
+    }
+
     private func persistRides() {
         do {
             try store.save(rides)
             print("✅ Successfully saved \(rides.count) rides")
         } catch {
             print("❌ ERROR: Failed to save rides: \(error.localizedDescription)")
+        }
+
+        // Tracks outlive their ride unless something removes them, and rides are
+        // deleted from five different places. Pruning here covers all of them
+        // rather than trusting each caller to remember.
+        let removed = trackStore.removeOrphans(keeping: Set(rides.map(\.id)))
+        if removed > 0 {
+            print("🗑️ Removed \(removed) orphaned GPS tracks")
         }
     }
 

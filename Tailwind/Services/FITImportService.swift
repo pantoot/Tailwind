@@ -409,6 +409,7 @@ class FITImportService: ObservableObject {
             calories: newCalories > 0 ? newCalories : ride.calories,
             elevationGain: ride.elevationGain,
             routeCoordinates: ride.routeCoordinates,
+            routePointCount: ride.routePointCount,
             notes: (ride.notes ?? "") + " (Watch HR merged)",
             bikeName: ride.bikeName,
             bikeType: ride.bikeType,

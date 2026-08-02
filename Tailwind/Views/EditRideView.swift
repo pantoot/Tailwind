@@ -117,6 +117,7 @@ struct EditRideView: View {
             averageCadence: ride.averageCadence,
             elevationGain: ride.elevationGain,
             routeCoordinates: ride.routeCoordinates,
+            routePointCount: ride.routePointCount,
             notes: notes.isEmpty ? ride.notes : notes,
             bikeName: ride.bikeName,
             bikeType: ride.bikeType,

@@ -186,7 +186,7 @@ struct CreateSegmentView: View {
                             .textFieldStyle(.roundedBorder)
                             .padding(.horizontal)
 
-                        if let ride = selectedRide, let coords = ride.routeCoordinates {
+                        if let ride = selectedRide, let coords = rideHistory.coordinates(for: ride) {
                             // Use first 10% and last 10% as segment
                             let segmentStart = 0
                             let segmentEnd = min(coords.count / 10, coords.count - 1)
@@ -215,11 +215,11 @@ struct CreateSegmentView: View {
     }
 
     private var ridesWithRoutes: [Ride] {
-        rideHistory.rides.filter { $0.routeCoordinates != nil && !$0.routeCoordinates!.isEmpty }
+        rideHistory.rides.filter { $0.hasRouteData }
     }
 
     private func createSegment(ride: Ride, startIdx: Int, endIdx: Int) {
-        guard let coords = ride.routeCoordinates else { return }
+        guard let coords = rideHistory.coordinates(for: ride) else { return }
 
         let clCoords = coords.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
         segmentManager.createSegment(name: segmentName, startIndex: startIdx, endIndex: endIdx, routeCoordinates: clCoords)

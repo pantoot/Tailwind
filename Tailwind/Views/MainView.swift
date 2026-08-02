@@ -989,6 +989,7 @@ struct MainView: View {
                     calories: existingRide.calories,
                     elevationGain: existingRide.elevationGain,
                     routeCoordinates: existingRide.routeCoordinates,
+                    routePointCount: existingRide.routePointCount,
                     notes: existingRide.notes,
                     bikeName: bikeName,
                     bikeType: bikeType

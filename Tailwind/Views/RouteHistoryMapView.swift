@@ -6,6 +6,11 @@ struct RouteHistoryMapView: View {
     @State private var selectedTimeframe: TimeFrame = .all
     @State private var mapCameraPosition: MapCameraPosition = .automatic
 
+    /// GPS tracks for the rides currently on screen, read from disk once when the
+    /// selection changes. They're deliberately not carried on the ride records, so
+    /// this view loads what it needs rather than every ride paying for them.
+    @State private var tracks: [UUID: [Ride.Coordinate]] = [:]
+
     enum TimeFrame: String, CaseIterable {
         case week = "7 Days"
         case month = "30 Days"
@@ -63,12 +68,19 @@ struct RouteHistoryMapView: View {
         }
         .navigationTitle("Route History")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: selectedTimeframe) { loadTracks() }
+    }
+
+    private func loadTracks() {
+        tracks = filteredRides.reduce(into: [UUID: [Ride.Coordinate]]()) { result, ride in
+            result[ride.id] = rideHistory.coordinates(for: ride)
+        }
     }
 
     private var filteredRides: [Ride] {
         let cutoffDate = selectedTimeframe.filterDate(from: Date())
         let ridesWithRoutes = rideHistory.rides.filter { ride in
-            ride.date >= cutoffDate && ride.routeCoordinates != nil && !ride.routeCoordinates!.isEmpty
+            ride.date >= cutoffDate && ride.hasRouteData
         }
 
         // Limit to most recent 50 rides to prevent memory issues
@@ -137,8 +149,7 @@ struct RouteHistoryMapView: View {
         var uniqueStarts: [Ride.Coordinate] = []
 
         for ride in filteredRides {
-            guard let coordinates = ride.routeCoordinates,
-                  let start = coordinates.first else { continue }
+            guard let start = tracks[ride.id]?.first else { continue }
 
             let isUnique = !uniqueStarts.contains { existingStart in
                 let latDiff = abs(start.latitude - existingStart.latitude)
@@ -176,9 +187,7 @@ struct RouteHistoryMapView: View {
 
             // Debug info
             let totalRides = rideHistory.rides.count
-            let ridesWithGPS = rideHistory.rides.filter {
-                $0.routeCoordinates != nil && !$0.routeCoordinates!.isEmpty
-            }.count
+            let ridesWithGPS = rideHistory.rides.filter { $0.hasRouteData }.count
 
             if totalRides > 0 {
                 VStack(spacing: 4) {
@@ -200,7 +209,7 @@ struct RouteHistoryMapView: View {
         Map(position: $mapCameraPosition) {
             // Draw all routes with different colors based on recency
             ForEach(Array(filteredRides.enumerated()), id: \.element.id) { index, ride in
-                if let coordinates = ride.routeCoordinates, !coordinates.isEmpty {
+                if let coordinates = tracks[ride.id], !coordinates.isEmpty {
                     // Downsample coordinates to reduce memory usage
                     let downsampledCoords = downsampleCoordinates(coordinates, maxPoints: 100)
                     MapPolyline(coordinates: downsampledCoords.map { $0.clCoordinate })
@@ -210,8 +219,7 @@ struct RouteHistoryMapView: View {
 
             // Add markers for start points only (reduce annotation count)
             ForEach(filteredRides) { ride in
-                if let coordinates = ride.routeCoordinates,
-                   let startCoord = coordinates.first {
+                if let startCoord = tracks[ride.id]?.first {
                     Annotation("", coordinate: startCoord.clCoordinate) {
                         Circle()
                             .fill(.green)
