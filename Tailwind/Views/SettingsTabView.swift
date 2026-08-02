@@ -231,7 +231,7 @@ struct SettingsTabView: View {
 
                     Button(action: { Task { await recalculateMissingTSS() } }) {
                         HStack {
-                            Label("Recalculate TSS", systemImage: "heart.text.clipboard")
+                            Label("Backfill HR & TSS", systemImage: "heart.text.clipboard")
                                 .foregroundStyle(.primary)
                             Spacer()
                             if isRecalculatingTSS {
@@ -800,12 +800,16 @@ struct SettingsTabView: View {
             return
         }
 
-        let ridesToFix = rideHistory.rides.filter { $0.hrTSS == nil }
+        // Rides missing TSS, plus rides that scored a TSS but recorded no heart rate
+        // (e.g. a Peloton class ridden without a strap). The second group is safe to
+        // touch now that calculateTSS prefers power — backfilling HR can't downgrade
+        // an existing power-based TSS.
+        let ridesToFix = rideHistory.rides.filter { $0.hrTSS == nil || $0.averageHeartRate == 0 }
 
         guard !ridesToFix.isEmpty else {
             await MainActor.run {
                 isRecalculatingTSS = false
-                tssRecalcProgress = "All rides already have TSS."
+                tssRecalcProgress = "All rides already have TSS and heart rate."
             }
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             await MainActor.run { tssRecalcProgress = "" }
