@@ -14,6 +14,10 @@ struct Ride: Identifiable, Codable {
     let maxHeartRate: Int // bpm
     let calories: Double
 
+    // Power & cadence summaries (nil when the source didn't record them)
+    let averagePower: Double? // watts
+    let averageCadence: Double? // rpm
+
     // GPS data
     let elevationGain: Double? // feet
     let routeCoordinates: [Coordinate]? // GPS track
@@ -59,6 +63,8 @@ struct Ride: Identifiable, Codable {
          averageHeartRate: Double,
          maxHeartRate: Int,
          calories: Double,
+         averagePower: Double? = nil,
+         averageCadence: Double? = nil,
          elevationGain: Double? = nil,
          routeCoordinates: [Coordinate]? = nil,
          notes: String? = nil,
@@ -76,6 +82,8 @@ struct Ride: Identifiable, Codable {
         self.averageHeartRate = averageHeartRate
         self.maxHeartRate = maxHeartRate
         self.calories = calories
+        self.averagePower = averagePower
+        self.averageCadence = averageCadence
         self.elevationGain = elevationGain
         self.routeCoordinates = routeCoordinates
         self.notes = notes
@@ -120,6 +128,20 @@ struct Ride: Identifiable, Codable {
 
     var formattedCalories: String {
         String(format: "%.0f cal", calories)
+    }
+
+    var formattedAvgPower: String {
+        averagePower.map { String(format: "%.0f W", $0) } ?? "—"
+    }
+
+    var formattedAvgCadence: String {
+        averageCadence.map { String(format: "%.0f rpm", $0) } ?? "—"
+    }
+
+    /// True when the ride recorded either power or cadence, so the detail view
+    /// can show that pair of stats together and keep the grid rows aligned.
+    var hasPowerOrCadence: Bool {
+        averagePower != nil || averageCadence != nil
     }
 }
 
@@ -328,6 +350,8 @@ class RideHistory: ObservableObject {
                     averageHeartRate: ride.averageHeartRate,
                     maxHeartRate: ride.maxHeartRate,
                     calories: correctedCalories,
+                    averagePower: ride.averagePower,
+                    averageCadence: ride.averageCadence,
                     elevationGain: ride.elevationGain,
                     routeCoordinates: ride.routeCoordinates,
                     notes: ride.notes,

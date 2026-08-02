@@ -113,6 +113,8 @@ struct EditRideView: View {
             averageHeartRate: Double(avgHeartRate) ?? ride.averageHeartRate,
             maxHeartRate: Int(maxHeartRate) ?? ride.maxHeartRate,
             calories: Double(calories) ?? ride.calories,
+            averagePower: ride.averagePower,
+            averageCadence: ride.averageCadence,
             elevationGain: ride.elevationGain,
             routeCoordinates: ride.routeCoordinates,
             notes: notes.isEmpty ? ride.notes : notes,

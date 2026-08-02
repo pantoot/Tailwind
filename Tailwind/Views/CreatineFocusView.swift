@@ -32,6 +32,7 @@ struct PowerAnalyticsContent: View {
                         matchesBurnedCard
                         max30sPowerCard
                         wkgDeltaCard
+                        cardiacEfficiencyCard
                         hrRecoveryCard
                         Spacer(minLength: 40)
                     }
@@ -162,6 +163,7 @@ struct PowerAnalyticsContent: View {
                     }
                 }
                 .frame(height: 160)
+                .chartYScale(domain: paddedDomain(values: recentPowerRides.map { $0.creatineMetrics?.max30sPower ?? 0 }))
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .day, count: 7)) { _ in
                         AxisGridLine()
@@ -224,6 +226,7 @@ struct PowerAnalyticsContent: View {
                     }
                 }
                 .frame(height: 160)
+                .chartYScale(domain: paddedDomain(values: wkgData.map { $0.wkg }))
                 .chartYAxis {
                     AxisMarks { value in
                         AxisGridLine()
@@ -257,7 +260,88 @@ struct PowerAnalyticsContent: View {
         .cornerRadius(16)
     }
 
-    // MARK: - Widget 4: HR Recovery
+    // MARK: - Widget 4: Cardiac Efficiency
+
+    private var cardiacEfficiencyCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Cardiac Efficiency", systemImage: "waveform.path.ecg")
+                    .font(.headline)
+                    .foregroundStyle(.teal)
+                Spacer()
+            }
+
+            Text("Watts per heartbeat — higher means fitter")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            let effData = powerRides.compactMap { ride -> (ride: Ride, efficiency: Double)? in
+                guard let metrics = ride.creatineMetrics,
+                      metrics.averagePower > 0,
+                      ride.averageHeartRate > 0 else { return nil }
+                return (ride: ride, efficiency: metrics.averagePower / ride.averageHeartRate)
+            }
+
+            if !effData.isEmpty {
+                Chart {
+                    ForEach(effData, id: \.ride.id) { item in
+                        LineMark(
+                            x: .value("Date", item.ride.date),
+                            y: .value("W/bpm", item.efficiency)
+                        )
+                        .foregroundStyle(.teal)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+
+                        PointMark(
+                            x: .value("Date", item.ride.date),
+                            y: .value("W/bpm", item.efficiency)
+                        )
+                        .foregroundStyle(.teal)
+                        .symbolSize(30)
+                    }
+
+                    if let startDate = creatineSettingsManager.settings.creatineStartDate {
+                        RuleMark(x: .value("Creatine Start", startDate))
+                            .foregroundStyle(.green)
+                            .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                    }
+                }
+                .frame(height: 160)
+                .chartYScale(domain: paddedDomain(values: effData.map { $0.efficiency }))
+                .chartYAxis {
+                    AxisMarks { value in
+                        AxisGridLine()
+                        AxisValueLabel {
+                            if let v = value.as(Double.self) {
+                                Text(String(format: "%.2f", v))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .day, count: 7)) { _ in
+                        AxisGridLine()
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                    }
+                }
+
+                if let latest = effData.last {
+                    Text(String(format: "Latest: %.2f W/bpm", latest.efficiency))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Needs rides with both power and heart rate data")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(16)
+    }
+
+    // MARK: - Widget 5: HR Recovery
 
     private var hrRecoveryCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -305,6 +389,7 @@ struct PowerAnalyticsContent: View {
                         }
                     }
                     .frame(height: 120)
+                    .chartYScale(domain: paddedDomain(values: rideAverages.map { $0.avgDelta }))
                     .chartXAxis {
                         AxisMarks(values: .stride(by: .day, count: 7)) { _ in
                             AxisGridLine()
@@ -362,6 +447,16 @@ struct PowerAnalyticsContent: View {
     }
 
     // MARK: - Helpers
+
+    /// Compute a Y-axis domain with ~10% padding above and below the data range
+    private func paddedDomain(values: [Double]) -> ClosedRange<Double> {
+        guard let min = values.min(), let max = values.max(), max > min else {
+            let v = values.first ?? 0
+            return (v - 1)...(v + 1)
+        }
+        let padding = (max - min) * 0.15
+        return (min - padding)...(max + padding)
+    }
 
     private func recoveryColor(_ delta: Double) -> Color {
         if delta > 30 { return .green }

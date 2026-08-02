@@ -40,11 +40,19 @@ struct CreatineAnalysisService {
 
         // Algorithm 3: HR recovery events
         let userProfile = UserProfile.load()
+        // Recovery power threshold: Zone 1 ceiling (55% FTP) for indoor/Peloton, or 25W fallback
+        let recoveryPowerThreshold: Double = {
+            if let ftp = userProfile.ftp {
+                return Double(ftp) * 0.55
+            }
+            return 25.0
+        }()
         let hrRecoveryEvents = detectHRRecovery(
             denseHR: denseHR,
             densePower: densePower,
             denseSpeed: denseSpeed,
             maxHR: userProfile.estimatedMaxHR,
+            recoveryPowerThreshold: recoveryPowerThreshold,
             rideStart: rideStart,
             baseTime: baseTime
         )
@@ -206,6 +214,7 @@ struct CreatineAnalysisService {
         densePower: [Double],
         denseSpeed: [Double],
         maxHR: Int,
+        recoveryPowerThreshold: Double,
         rideStart: Date,
         baseTime: Date
     ) -> [HRRecoveryEvent] {
@@ -223,11 +232,11 @@ struct CreatineAnalysisService {
                 continue
             }
 
-            // Step 2: Look for power drop to near-zero within next few seconds
+            // Step 2: Look for power drop to recovery zone within next few seconds
             var powerDropIndex: Int? = nil
             let searchEnd = min(i + 5, densePower.count - 60)
             for j in i..<searchEnd {
-                if j < densePower.count && densePower[j] < 25 {
+                if j < densePower.count && densePower[j] < recoveryPowerThreshold {
                     powerDropIndex = j
                     break
                 }
@@ -238,14 +247,14 @@ struct CreatineAnalysisService {
                 continue
             }
 
-            // Step 3: Verify power stays near-zero for 60+ seconds
-            // Allow brief spikes <5 seconds (soft pedaling)
+            // Step 3: Verify power stays in recovery zone for 60+ seconds
+            // Allow brief spikes <5 seconds (shifting gears, standing, etc.)
             var lowPowerSeconds = 0
             var spikeSeconds = 0
             var valid = true
 
             for j in dropStart..<min(dropStart + 60, densePower.count) {
-                if densePower[j] < 25 {
+                if densePower[j] < recoveryPowerThreshold {
                     lowPowerSeconds += 1
                     spikeSeconds = 0
                 } else {

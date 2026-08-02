@@ -24,6 +24,9 @@ struct RidesTabView: View {
     @State private var showingError = false
     @State private var errorMessage = ""
 
+    // Manual entry
+    @State private var showingManualEntry = false
+
     // Apple Health import
     @State private var showingHealthImport = false
     @State private var isImportingFromHealth = false
@@ -69,6 +72,12 @@ struct RidesTabView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage)
+        }
+        .sheet(isPresented: $showingManualEntry) {
+            ManualRideEntryView()
+                .environmentObject(healthKitService)
+                .environmentObject(rideHistory)
+                .environmentObject(trainingLoadManager)
         }
         .confirmationDialog("Reimport Today", isPresented: $showingReimportConfirm) {
             Button("Reimport Today's Rides", role: .destructive) {
@@ -167,19 +176,34 @@ struct RidesTabView: View {
                 .disabled(isImportingFromHealth)
             }
 
-            Button(action: { showingReimportConfirm = true }) {
-                HStack {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Reimport Today")
-                        .fontWeight(.semibold)
+            HStack(spacing: 12) {
+                Button(action: { showingReimportConfirm = true }) {
+                    HStack {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                        Text("Reimport Today")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.orange)
+                    .foregroundStyle(.white)
+                    .cornerRadius(10)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.orange)
-                .foregroundStyle(.white)
-                .cornerRadius(10)
+                .disabled(isImportingFromHealth)
+
+                Button(action: { showingManualEntry = true }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Manual")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.green)
+                    .foregroundStyle(.white)
+                    .cornerRadius(10)
+                }
             }
-            .disabled(isImportingFromHealth)
         }
     }
 
@@ -478,9 +502,13 @@ struct RidesTabView: View {
 
         if overlapStart < overlapEnd {
             let overlapDuration = overlapEnd.timeIntervalSince(overlapStart)
-            let shorterDuration = min(existingRide.duration, newWorkout.duration)
 
-            if overlapDuration / shorterDuration > 0.5 {
+            // Compare against the LONGER workout. Using the shorter one meant a brief
+            // cool-down sitting inside a real ride overlapped 100% of itself, so the
+            // 60-minute ride got discarded as a "duplicate" of a 5-minute cool-down.
+            let longerDuration = max(existingRide.duration, newWorkout.duration)
+
+            if longerDuration > 0, overlapDuration / longerDuration > 0.5 {
                 return true
             }
         }

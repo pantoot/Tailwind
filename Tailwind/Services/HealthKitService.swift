@@ -426,6 +426,8 @@ class HealthKitService: ObservableObject {
             averageHeartRate: heartRateData.average,
             maxHeartRate: Int(heartRateData.max),
             calories: calories,
+            averagePower: creatineMetrics?.averagePower,
+            averageCadence: nil,
             elevationGain: nil,
             routeCoordinates: routeCoordinates,
             notes: "Imported from \(workoutSource)",
@@ -547,6 +549,210 @@ class HealthKitService: ObservableObject {
 
         print("🔥 Created workout with Active Energy: \(Int(ride.calories)) kcal for Move ring")
         print("   Workout ID: \(workout?.uuid.uuidString ?? "unknown")")
+    }
+
+    // MARK: - Manual Workout Entry
+
+    /// Creates a cycling workout in HealthKit from manually entered data (e.g. Peloton ride that failed to sync)
+    /// Returns a Ride object for Tailwind's ride history
+    func createManualWorkout(
+        startDate: Date,
+        duration: TimeInterval,
+        calories: Double,
+        distance: Double, // miles
+        averagePower: Double?, // watts
+        averageHeartRate: Double?,
+        maxHeartRate: Int?,
+        averageCadence: Double?,
+        averageSpeed: Double?, // mph
+        maxSpeed: Double? = nil, // mph
+        notes: String?
+    ) async throws -> Ride {
+        guard isHealthKitAvailable else {
+            throw HealthKitError.notAvailable
+        }
+
+        try await requestAuthorization()
+
+        let endDate = startDate.addingTimeInterval(duration)
+        let speed = averageSpeed ?? (duration > 0 ? (distance / duration) * 3600 : 0)
+        let peakSpeed = maxSpeed ?? speed
+
+        // Calculate TSS from power if FTP is set, otherwise from HR
+        let userProfile = UserProfile.load()
+        let hrTSS: Double?
+        if let avgPower = averagePower, let ftp = userProfile.ftp, ftp > 0 {
+            // Power-based TSS: (seconds × (avgPower/FTP)²) / 36
+            let intensityFactor = avgPower / Double(ftp)
+            hrTSS = (duration * intensityFactor * intensityFactor) / 36.0
+            print("📊 Power TSS: \(String(format: "%.1f", hrTSS!)) (IF=\(String(format: "%.2f", intensityFactor)))")
+        } else if let avgHR = averageHeartRate, avgHR > 0,
+                  let lthr = userProfile.lactateThresholdHR {
+            let hrIntensity = avgHR / Double(lthr)
+            hrTSS = (duration / 3600.0) * hrIntensity * hrIntensity * 100
+        } else {
+            hrTSS = nil
+        }
+
+        // Build HealthKit workout
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .cycling
+        configuration.locationType = .indoor
+
+        let builder = HKWorkoutBuilder(
+            healthStore: healthStore,
+            configuration: configuration,
+            device: .local()
+        )
+
+        try await builder.beginCollection(at: startDate)
+
+        // Active Energy (required for Move ring)
+        let activeEnergyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)!
+        let caloriesSample = HKQuantitySample(
+            type: activeEnergyType,
+            quantity: HKQuantity(unit: .kilocalorie(), doubleValue: calories),
+            start: startDate,
+            end: endDate
+        )
+        try await builder.addSamples([caloriesSample])
+
+        // Distance
+        if distance > 0 {
+            let distanceSample = HKQuantitySample(
+                type: HKQuantityType.quantityType(forIdentifier: .distanceCycling)!,
+                quantity: HKQuantity(unit: .mile(), doubleValue: distance),
+                start: startDate,
+                end: endDate
+            )
+            try await builder.addSamples([distanceSample])
+        }
+
+        // Metadata
+        try await builder.addMetadata([
+            HKMetadataKeyIndoorWorkout: true,
+            "Tailwind": true,
+            "ManualEntry": true
+        ])
+
+        try await builder.endCollection(at: endDate)
+        let workout = try await builder.finishWorkout()
+        print("🔥 Manual workout created: \(Int(calories)) kcal, \(String(format: "%.1f", distance)) mi")
+        print("   Workout ID: \(workout?.uuid.uuidString ?? "unknown")")
+
+        let ride = Ride(
+            id: UUID(),
+            date: startDate,
+            duration: duration,
+            distance: distance,
+            averageSpeed: speed,
+            maxSpeed: peakSpeed,
+            averageHeartRate: averageHeartRate ?? 0,
+            maxHeartRate: maxHeartRate ?? 0,
+            calories: calories,
+            averagePower: averagePower,
+            averageCadence: averageCadence,
+            elevationGain: nil,
+            routeCoordinates: nil,
+            notes: notes ?? "Manual entry (Peloton sync fix)",
+            bikeName: nil,
+            bikeType: nil,
+            timeInZone: nil,
+            hrTSS: hrTSS,
+            creatineMetrics: nil
+        )
+
+        return ride
+    }
+
+    // MARK: - HealthKit Diagnostics
+
+    struct WorkoutDiagnostic: Identifiable {
+        let id = UUID()
+        let source: String
+        let bundleId: String
+        let activityType: String
+        let startTime: Date
+        let endTime: Date
+        let duration: TimeInterval
+        let calories: Double
+        let distance: Double // miles
+        let hasTailwindMeta: Bool
+    }
+
+    /// Fetch ALL workouts for a given date from all sources — useful for diagnosing sync issues
+    func diagnoseWorkouts(for date: Date) async throws -> [WorkoutDiagnostic] {
+        guard isHealthKitAvailable else {
+            throw HealthKitError.notAvailable
+        }
+
+        try await requestAuthorization()
+
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: date)
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay)!
+
+        let datePredicate = HKQuery.predicateForSamples(
+            withStart: startOfDay,
+            end: endOfDay,
+            options: .strictStartDate
+        )
+
+        let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: datePredicate,
+                limit: 200,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+            ) { _, samples, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: samples as? [HKWorkout] ?? [])
+                }
+            }
+            healthStore.execute(query)
+        }
+
+        return workouts.map { workout in
+            let activityName: String
+            switch workout.workoutActivityType {
+            case .cycling: activityName = "Cycling"
+            case .running: activityName = "Running"
+            case .walking: activityName = "Walking"
+            case .yoga: activityName = "Yoga"
+            case .functionalStrengthTraining: activityName = "Strength"
+            case .cooldown: activityName = "Cooldown"
+            case .highIntensityIntervalTraining: activityName = "HIIT"
+            default: activityName = "Other (\(workout.workoutActivityType.rawValue))"
+            }
+
+            let calories: Double
+            if #available(iOS 18.0, *) {
+                if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
+                   let stat = workout.statistics(for: energyType) {
+                    calories = stat.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+                } else {
+                    calories = 0
+                }
+            } else {
+                calories = workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) ?? 0
+            }
+
+            let distance = workout.totalDistance?.doubleValue(for: .mile()) ?? 0
+
+            return WorkoutDiagnostic(
+                source: workout.sourceRevision.source.name,
+                bundleId: workout.sourceRevision.source.bundleIdentifier,
+                activityType: activityName,
+                startTime: workout.startDate,
+                endTime: workout.endDate,
+                duration: workout.duration,
+                calories: calories,
+                distance: distance,
+                hasTailwindMeta: workout.metadata?["Tailwind"] as? Bool ?? false
+            )
+        }
     }
 
     // MARK: - Heart Rate Data Fetching
@@ -1158,6 +1364,62 @@ class HealthKitService: ObservableObject {
             rideStart: startDate,
             settings: CreatineSettings.load()
         )
+    }
+
+    /// Re-fetch HR data from HealthKit for an existing ride and recalculate TSS.
+    /// Returns updated (avgHR, maxHR, hrTSS) if HR data is now available, nil otherwise.
+    func reanalyzeHR(for ride: Ride) async -> (averageHR: Double, maxHR: Double, hrTSS: Double?)? {
+        let startDate = ride.date
+        let endDate = startDate.addingTimeInterval(ride.duration)
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: startDate,
+            end: endDate,
+            options: .strictStartDate
+        )
+
+        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+
+        do {
+            let statistics = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<HKStatistics?, Error>) in
+                let query = HKStatisticsQuery(
+                    quantityType: heartRateType,
+                    quantitySamplePredicate: predicate,
+                    options: [.discreteAverage, .discreteMax]
+                ) { _, statistics, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: statistics)
+                    }
+                }
+                healthStore.execute(query)
+            }
+
+            guard let stats = statistics else { return nil }
+
+            let hrUnit = HKUnit.count().unitDivided(by: .minute())
+            let avgHR = stats.averageQuantity()?.doubleValue(for: hrUnit) ?? 0
+            let maxHR = stats.maximumQuantity()?.doubleValue(for: hrUnit) ?? 0
+
+            guard avgHR > 0 else { return nil }
+
+            let userProfile = UserProfile.load()
+            let hrTSS: Double?
+            if let thresholdHR = userProfile.lactateThresholdHR, ride.duration > 0 {
+                let hrIntensity = avgHR / Double(thresholdHR)
+                let hours = ride.duration / 3600.0
+                hrTSS = hours * hrIntensity * hrIntensity * 100
+                print("📊 Recalculated TSS: \(String(format: "%.1f", hrTSS!)) (HR: \(String(format: "%.0f", avgHR)) / LTHR: \(thresholdHR))")
+            } else {
+                hrTSS = nil
+            }
+
+            return (averageHR: avgHR, maxHR: maxHR, hrTSS: hrTSS)
+        } catch {
+            print("⚠️ No HR data for ride on \(startDate): \(error.localizedDescription)")
+            return nil
+        }
     }
 
     // Fetch route data (GPS coordinates) for a workout from HealthKit

@@ -99,6 +99,24 @@ struct RideDetailView: View {
                             color: .red
                         )
 
+                        // Shown as a pair so the two-column rows stay aligned even
+                        // when only one of the two was recorded.
+                        if ride.hasPowerOrCadence {
+                            StatCard(
+                                title: "Avg Power",
+                                value: ride.formattedAvgPower,
+                                icon: "bolt.fill",
+                                color: .yellow
+                            )
+
+                            StatCard(
+                                title: "Avg Cadence",
+                                value: ride.formattedAvgCadence,
+                                icon: "arrow.clockwise",
+                                color: .teal
+                            )
+                        }
+
                         StatCard(
                             title: "Calories",
                             value: ride.formattedCalories,
