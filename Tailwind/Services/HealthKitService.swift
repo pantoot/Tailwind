@@ -312,7 +312,16 @@ class HealthKitService: ObservableObject {
 
     // MARK: - Import Workouts
 
-    // Fetch cycling workouts from HealthKit (limited to 100 most recent to prevent memory issues)
+    // Fetch cycling workouts from HealthKit for a date range.
+    //
+    // Deliberately unlimited: the date predicate is the real bound, and a fixed cap
+    // silently truncated long imports. At ~2 workouts per session (ride + cool down)
+    // a 90-day range crosses 100 easily, and because results are sorted newest-first
+    // the oldest sessions were dropped with no warning — affecting both Health import
+    // and LTHR estimation, which shares this call.
+    //
+    // Safe for memory: HKWorkout is lightweight metadata. The OOM risk documented for
+    // this service applies to *sample* queries (1Hz HR/power), which stay capped.
     func fetchCyclingWorkouts(from startDate: Date, to endDate: Date) async throws -> [HKWorkout] {
         guard isHealthKitAvailable else {
             throw HealthKitError.notAvailable
@@ -331,13 +340,15 @@ class HealthKitService: ObservableObject {
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: compound,
-                limit: 100, // Limit to 100 workouts to prevent memory issues
+                limit: HKObjectQueryNoLimit,
                 sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
             ) { _, samples, error in
                 if let error = error {
                     continuation.resume(throwing: error)
                 } else {
-                    continuation.resume(returning: samples as? [HKWorkout] ?? [])
+                    let workouts = samples as? [HKWorkout] ?? []
+                    print("📥 Fetched \(workouts.count) cycling workouts from HealthKit")
+                    continuation.resume(returning: workouts)
                 }
             }
             healthStore.execute(query)
