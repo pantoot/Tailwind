@@ -33,6 +33,10 @@ struct Ride: Identifiable, Codable {
 
     // GPS data
     let elevationGain: Double? // feet
+    /// Ambient temperature during the ride. Outdoor heart rate is only comparable
+    /// across rides at similar temperatures — heat inflates it independently of
+    /// fitness. Nil when the source recorded none (all indoor rides, older imports).
+    let averageTemperatureCelsius: Double?
     let routeCoordinates: [Coordinate]? // GPS track
     let notes: String?
 
@@ -79,6 +83,7 @@ struct Ride: Identifiable, Codable {
          averagePower: Double? = nil,
          averageCadence: Double? = nil,
          elevationGain: Double? = nil,
+         averageTemperatureCelsius: Double? = nil,
          routeCoordinates: [Coordinate]? = nil,
          notes: String? = nil,
          bikeName: String? = nil,
@@ -98,6 +103,7 @@ struct Ride: Identifiable, Codable {
         self.averagePower = averagePower
         self.averageCadence = averageCadence
         self.elevationGain = elevationGain
+        self.averageTemperatureCelsius = averageTemperatureCelsius
         self.routeCoordinates = routeCoordinates
         self.notes = notes
         self.bikeName = bikeName
@@ -165,6 +171,10 @@ struct Ride: Identifiable, Codable {
         return nil
     }
 
+    var averageTemperatureFahrenheit: Double? {
+        averageTemperatureCelsius.map { $0 * 9 / 5 + 32 }
+    }
+
     /// Indoor or outdoor, inferred from the strongest signal available.
     var environment: RideEnvironment {
         // GPS is definitive — a trainer can't record a route.
@@ -205,6 +215,7 @@ struct Ride: Identifiable, Codable {
             averagePower: averagePower,
             averageCadence: averageCadence,
             elevationGain: elevationGain,
+            averageTemperatureCelsius: averageTemperatureCelsius,
             routeCoordinates: routeCoordinates,
             notes: notes,
             bikeName: bikeName,
@@ -220,18 +231,28 @@ struct Ride: Identifiable, Codable {
 class RideHistory: ObservableObject {
     @Published var rides: [Ride] = []
 
-    private let ridesKey = "SavedRides"
-    private let maxRides = 100 // Keep last 100 rides
+    private let store: RideStore
 
-    init() {
-        loadRides()
+    /// Upper bound on stored rides — roughly three years at Rick's volume. Rides
+    /// live in a file now rather than UserDefaults, so this is a guard against
+    /// unbounded decode cost at launch, not a storage limit. Truncation is logged
+    /// because the old silent version quietly ate the back of the training history.
+    private let maxRides = 1000
+
+    init(store: RideStore = RideStore()) {
+        self.store = store
+        rides = store.load()
     }
 
     func saveRide(_ ride: Ride) {
         rides.insert(ride, at: 0) // Add to beginning (most recent first)
 
-        // Limit to max rides
         if rides.count > maxRides {
+            let dropped = rides.count - maxRides
+            let oldest = rides.suffix(dropped)
+            for ride in oldest {
+                print("⚠️ Ride log at \(maxRides); dropping oldest: \(ride.formattedDate)")
+            }
             rides = Array(rides.prefix(maxRides))
         }
 
@@ -307,30 +328,47 @@ class RideHistory: ObservableObject {
         persistRides()
     }
 
+    /// Two rides are the same ride when they start within this window of each other.
+    /// HealthKit hands back the same workout from several sources with slightly
+    /// different start times.
+    private static let duplicateStartWindow: TimeInterval = 300 // 5 minutes
+
+    /// ...and when their durations agree this closely.
+    private static let duplicateDurationSimilarity = 0.9 // within 10%
+
+    /// Rides bucketed so that each bucket holds one real ride and its duplicates.
+    /// A bucket of one means no duplicate.
+    private func duplicateGroups() -> [[Ride]] {
+        rides.reduce(into: [[Ride]]()) { groups, ride in
+            let match = groups.firstIndex { group in
+                group.contains { existing in
+                    abs(existing.date.timeIntervalSince(ride.date)) < Self.duplicateStartWindow
+                        && min(existing.duration, ride.duration) / max(existing.duration, ride.duration) > Self.duplicateDurationSimilarity
+                }
+            }
+
+            guard let match else {
+                groups.append([ride])
+                return
+            }
+            groups[match].append(ride)
+        }
+    }
+
+    /// How many rides `removeDuplicates()` would actually discard. Drives the
+    /// Settings badge, which previously showed the total ride count and read as
+    /// though every ride were a duplicate.
+    var duplicateCount: Int {
+        duplicateGroups().reduce(0) { $0 + ($1.count - 1) }
+    }
+
     // Remove duplicate rides (same start time within 5 minutes and similar duration)
     // Keeps the ride with the most complete data
     func removeDuplicates() -> Int {
         let originalCount = rides.count
 
-        // Group rides that are duplicates of each other
-        var groups: [[Ride]] = []
-
-        for ride in rides {
-            // Find if this ride belongs to an existing group
-            if let groupIndex = groups.firstIndex(where: { group in
-                group.contains { existing in
-                    abs(existing.date.timeIntervalSince(ride.date)) < 300 && // 5 minutes
-                    min(existing.duration, ride.duration) / max(existing.duration, ride.duration) > 0.9 // within 10%
-                }
-            }) {
-                groups[groupIndex].append(ride)
-            } else {
-                groups.append([ride])
-            }
-        }
-
         // For each group, keep the ride with the most data
-        rides = groups.map { group in
+        rides = duplicateGroups().map { group in
             if group.count == 1 {
                 return group[0]
             }
@@ -492,32 +530,12 @@ class RideHistory: ObservableObject {
         return await fixCalories(for: nil, userProfile: userProfile, healthKitService: healthKitService)
     }
 
-    private func loadRides() {
-        guard let data = UserDefaults.standard.data(forKey: ridesKey) else {
-            print("ℹ️ No saved rides data found")
-            return
-        }
-
-        do {
-            let decoder = JSONDecoder()
-            rides = try decoder.decode([Ride].self, from: data)
-            print("✅ Successfully loaded \(rides.count) rides")
-        } catch {
-            print("❌ ERROR: Failed to decode rides: \(error)")
-            print("   Clearing corrupt data and starting fresh")
-            UserDefaults.standard.removeObject(forKey: ridesKey)
-            rides = []
-        }
-    }
-
     private func persistRides() {
         do {
-            let encoder = JSONEncoder()
-            let encoded = try encoder.encode(rides)
-            UserDefaults.standard.set(encoded, forKey: ridesKey)
+            try store.save(rides)
             print("✅ Successfully saved \(rides.count) rides")
         } catch {
-            print("❌ ERROR: Failed to encode rides: \(error)")
+            print("❌ ERROR: Failed to save rides: \(error.localizedDescription)")
         }
     }
 

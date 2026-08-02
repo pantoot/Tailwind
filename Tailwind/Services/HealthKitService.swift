@@ -373,22 +373,42 @@ class HealthKitService: ObservableObject {
     ) -> Double? {
         guard duration > 0 else { return nil }
 
-        if let power = averagePower, power > 0, let ftp = profile.ftp, ftp > 0 {
-            let intensityFactor = power / Double(ftp)
-            let tss = (duration * intensityFactor * intensityFactor) / 36.0
-            print("📊 Power TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", power))W / FTP \(ftp), IF=\(String(format: "%.2f", intensityFactor)))")
+        if let tss = powerTSS(duration: duration, averagePower: averagePower, profile: profile) {
+            let power = averagePower ?? 0
+            let ftp = profile.ftp ?? 0
+            print("📊 Power TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", power))W / FTP \(ftp), IF=\(String(format: "%.2f", power / Double(ftp))))")
             return tss
         }
 
-        if let hr = averageHeartRate, hr > 0, let lthr = profile.lactateThresholdHR {
-            let intensityFactor = hr / Double(lthr)
-            let tss = (duration * intensityFactor * intensityFactor) / 36.0
-            print("📊 HR TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", hr))bpm / LTHR \(lthr), IF=\(String(format: "%.2f", intensityFactor)))")
+        if let tss = heartRateTSS(duration: duration, averageHeartRate: averageHeartRate, profile: profile) {
+            let hr = averageHeartRate ?? 0
+            let lthr = profile.lactateThresholdHR ?? 0
+            print("📊 HR TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", hr))bpm / LTHR \(lthr), IF=\(String(format: "%.2f", hr / Double(lthr))))")
             return tss
         }
 
         print("⚠️ TSS not calculated — needs power+FTP or HR+LTHR")
         return nil
+    }
+
+    /// TSS from power alone, or nil without both power and an FTP. Silent, so
+    /// bulk callers such as the data-quality audit don't flood the console.
+    static func powerTSS(duration: TimeInterval, averagePower: Double?, profile: UserProfile) -> Double? {
+        guard duration > 0, let power = averagePower, power > 0,
+              let ftp = profile.ftp, ftp > 0 else { return nil }
+        return stress(duration: duration, intensityFactor: power / Double(ftp))
+    }
+
+    /// TSS from heart rate alone, or nil without both a heart rate and an LTHR.
+    static func heartRateTSS(duration: TimeInterval, averageHeartRate: Double?, profile: UserProfile) -> Double? {
+        guard duration > 0, let hr = averageHeartRate, hr > 0,
+              let lthr = profile.lactateThresholdHR, lthr > 0 else { return nil }
+        return stress(duration: duration, intensityFactor: hr / Double(lthr))
+    }
+
+    /// TSS = (seconds × IF²) / 36 — the shared core of both scoring routes.
+    private static func stress(duration: TimeInterval, intensityFactor: Double) -> Double {
+        (duration * intensityFactor * intensityFactor) / 36.0
     }
 
     // Import a HealthKit workout as a Ride
@@ -427,6 +447,11 @@ class HealthKitService: ObservableObject {
         // Check if indoor workout (Peloton, etc.)
         let isIndoor = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool ?? false
         let workoutSource = isIndoor ? "Indoor Cycling" : "Apple Workouts"
+
+        // Apple Watch stamps outdoor workouts with the weather. Keeps outdoor heart
+        // rate comparable across seasons, where heat alone moves it 5-11 bpm.
+        let temperature = (workout.metadata?[HKMetadataKeyWeatherTemperature] as? HKQuantity)?
+            .doubleValue(for: .degreeCelsius())
 
         // Fetch power and HR samples for creatine analysis (Peloton, Zwift, etc.)
         let powerSamples = await fetchPowerSamples(for: workout)
@@ -470,6 +495,7 @@ class HealthKitService: ObservableObject {
             averagePower: creatineMetrics?.averagePower,
             averageCadence: nil,
             elevationGain: nil,
+            averageTemperatureCelsius: temperature,
             routeCoordinates: routeCoordinates,
             notes: "Imported from \(workoutSource)",
             bikeName: nil,

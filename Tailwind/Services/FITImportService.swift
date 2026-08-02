@@ -12,6 +12,7 @@ struct FITWorkoutData {
     let distance: Double // meters
     let calories: Double
     let elevationGain: Double? // meters
+    let averageTemperature: Double? // Celsius, nil when the head unit had no sensor
 
     // Detailed samples for HealthKit
     let heartRateSamples: [(date: Date, bpm: Double)]
@@ -156,6 +157,12 @@ class FITImportService: ObservableObject {
         var totalCalories: Double = 0
         var totalAscent: Double = 0
 
+        // Ambient temperature, so outdoor efforts can be compared like with like.
+        // A Phoenix ride in June runs 5-11 bpm hotter than the same route in April
+        // at identical speed, which otherwise reads as a fitness decline.
+        var sessionTemperature: Double?
+        var recordTemperatures: [Double] = []
+
         // Downsample interval: keep every Nth second to reduce memory
         // 5-second intervals still provide good HR graph resolution
         let downsampleInterval: TimeInterval = 5.0
@@ -236,6 +243,14 @@ class FITImportService: ObservableObject {
                 powerSamples.append((date: timestamp, watts: power))
             }
 
+            // Ambient temperature. Sanity-bounded because a disconnected sensor
+            // reports sentinel values rather than nothing.
+            if let temperatureField = fields["temperature"],
+               let temperature = temperatureField.valueUnit?.value,
+               temperature > -30 && temperature < 70 {
+                recordTemperatures.append(temperature)
+            }
+
             // GPS position
             if let position = fields["position"]?.coordinate {
                 let altitude = fields["altitude"]?.valueUnit?.value
@@ -256,6 +271,12 @@ class FITImportService: ObservableObject {
             if let ascentField = fields["total_ascent"],
                let ascent = ascentField.valueUnit?.value {
                 totalAscent = ascent
+            }
+
+            if let temperatureField = fields["avg_temperature"],
+               let temperature = temperatureField.valueUnit?.value,
+               temperature > -30 && temperature < 70 {
+                sessionTemperature = temperature
             }
 
             // Use session start/end if not found in records
@@ -299,6 +320,7 @@ class FITImportService: ObservableObject {
             distance: totalDistance,
             calories: totalCalories,
             elevationGain: totalAscent > 0 ? totalAscent : nil,
+            averageTemperature: sessionTemperature ?? averageOf(recordTemperatures),
             heartRateSamples: heartRateSamples,
             speedSamples: speedSamples,
             cadenceSamples: cadenceSamples,
@@ -306,6 +328,11 @@ class FITImportService: ObservableObject {
             coordinates: coordinates,
             creatineMetrics: creatineMetrics
         )
+    }
+
+    private func averageOf(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
     }
 
     /// Create a Ride model from parsed FIT data
@@ -328,6 +355,7 @@ class FITImportService: ObservableObject {
             maxHeartRate: data.maxHeartRate,
             calories: data.calories,
             elevationGain: data.elevationGainFeet,
+            averageTemperatureCelsius: data.averageTemperature,
             routeCoordinates: routeCoordinates,
             notes: "Imported from Magene",
             bikeName: nil,

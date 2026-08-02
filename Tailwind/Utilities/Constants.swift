@@ -22,10 +22,16 @@ struct Constants {
 
     // Workout import
     struct Import {
-        /// Workouts shorter than this are skipped. Peloton writes each warm-up and
-        /// cool-down as its own cycling activity, so importing everything inflates
-        /// the ride count and adds a few TSS per phantom "ride". Skipped workouts
-        /// are always reported back to the user rather than dropped silently.
-        static let minimumWorkoutDuration: TimeInterval = 10 * 60
+        /// The shortest thing that counts as a ride.
+        ///
+        /// Peloton writes each warm-up and cool-down as its own cycling activity, so
+        /// importing everything inflates the ride count and adds a few TSS per
+        /// phantom "ride". Fifteen minutes clears both the 5-minute cool-downs and
+        /// the 10-minute warm-up classes while keeping any real short session.
+        ///
+        /// Route analysis uses the same bar — a ride too short to be a session is
+        /// also too short to be a route — so the two never drift apart.
+        /// Skipped workouts are always reported rather than dropped silently.
+        static let minimumWorkoutDuration: TimeInterval = 15 * 60
     }
 }

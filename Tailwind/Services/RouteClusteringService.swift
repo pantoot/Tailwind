@@ -19,9 +19,9 @@ enum RouteClusteringService {
     /// Minimum rides before a cluster carries enough signal to trend.
     static let minimumRidesPerRoute = 3
 
-    /// Shortest ride that counts as a route at all. Below this it is a cool-down
-    /// or a warm-up.
-    static let minimumRideDuration: TimeInterval = 15 * 60
+    /// Shortest ride that counts as a route at all. Shares the import bar — a ride
+    /// too short to be a session is too short to be a route.
+    static let minimumRideDuration = Constants.Import.minimumWorkoutDuration
 
     /// A set of rides believed to be the same route, oldest first.
     struct RouteCluster {

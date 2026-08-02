@@ -23,6 +23,7 @@ struct SettingsTabView: View {
     // Clear all rides
     @State private var showingClearAllConfirmation = false
     @State private var showingRemoveShortRidesConfirmation = false
+    @State private var showingRepairTSSConfirmation = false
 
     // Creatine reanalysis
     @State private var isReanalyzing = false
@@ -59,6 +60,13 @@ struct SettingsTabView: View {
     private var shortRideCount: Int {
         rideHistory.shortRides(shorterThan: Constants.Import.minimumWorkoutDuration).count
     }
+
+    /// Rides whose stored TSS can't be reproduced from their own data.
+    private var suspectTSS: [TSSAuditService.Discrepancy] {
+        TSSAuditService.audit(rideHistory.rides, profile: UserProfile.load())
+    }
+
+    private var suspectTSSCount: Int { suspectTSS.count }
 
     var body: some View {
         NavigationStack {
@@ -282,10 +290,27 @@ struct SettingsTabView: View {
                             Label("Clean Up Duplicates", systemImage: "doc.on.doc")
                                 .foregroundStyle(.primary)
                             Spacer()
-                            Text("\(rideHistory.rides.count) rides")
+                            // The count of what this button removes, not the total
+                            // ride count — that read as "84 duplicates".
+                            let count = rideHistory.duplicateCount
+                            Text(count == 0 ? "None found" : "\(count) duplicates")
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .disabled(rideHistory.duplicateCount == 0)
+
+                    Button {
+                        showingRepairTSSConfirmation = true
+                    } label: {
+                        HStack {
+                            Label("Repair Suspect TSS", systemImage: "wrench.adjustable")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(suspectTSSCount == 0 ? "None found" : "\(suspectTSSCount) rides")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(suspectTSSCount == 0)
 
                     Button(role: .destructive) {
                         showingRemoveShortRidesConfirmation = true
@@ -441,6 +466,12 @@ struct SettingsTabView: View {
                 Text(duplicatesRemoved > 0
                     ? "Removed \(duplicatesRemoved) duplicate rides. \(rideHistory.rides.count) rides remaining."
                     : "No duplicate rides found.")
+            }
+            .alert("Repair Suspect TSS?", isPresented: $showingRepairTSSConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Repair \(suspectTSSCount)") { repairSuspectTSS() }
+            } message: {
+                Text("\(suspectTSSCount) rides have a TSS that matches neither their recorded heart rate nor their power. They'll be rescored from their own data — heart rate where available, since that's what they were originally scored from. Rides that are merely still HR-scored despite having power are left alone; rescoring those needs a validated FTP.")
             }
             .alert("Remove Warm-ups & Cool-downs?", isPresented: $showingRemoveShortRidesConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -622,7 +653,8 @@ struct SettingsTabView: View {
                 let hrStr = ride.averageHeartRate > 0 ? String(format: "%3.0f bpm", ride.averageHeartRate) : "  — bpm"
                 let powerStr = ride.creatineMetrics.map { String(format: "%3.0fW avg", $0.averagePower) } ?? "   —"
                 let tssStr = ride.hrTSS.map { String(format: "%3.0f", $0) } ?? "  —"
-                print("  \(formatter.string(from: ride.date))    \(String(format: "%4.1f", ride.averageSpeed)) mph  \(hrStr)  \(tssStr)    \(ride.formattedDuration)    \(powerStr)")
+                let tempStr = ride.averageTemperatureFahrenheit.map { String(format: "  %3.0f°F", $0) } ?? ""
+                print("  \(formatter.string(from: ride.date))    \(String(format: "%4.1f", ride.averageSpeed)) mph  \(hrStr)  \(tssStr)    \(ride.formattedDuration)    \(powerStr)\(tempStr)")
             }
 
             // Trend analysis for this route. Thirds must not overlap — with the old
@@ -658,6 +690,19 @@ struct SettingsTabView: View {
                 print("    Power: \(String(format: "%.0f", earlyAvgPower)) → \(String(format: "%.0f", lateAvgPower))W (\(String(format: "%+.0f", powerDelta))) \(powerDelta > 3 ? "⚡ STRONGER" : powerDelta < -3 ? "📉 LOWER" : "➡️ SAME")")
             }
 
+            // Temperature moves outdoor heart rate on its own, so a warmer recent
+            // window can look exactly like lost fitness. Call it out rather than
+            // letting the HR line take the blame.
+            let earlyTemps = firstThird.compactMap { $0.averageTemperatureFahrenheit }
+            let lateTemps = lastThird.compactMap { $0.averageTemperatureFahrenheit }
+            if !earlyTemps.isEmpty && !lateTemps.isEmpty {
+                let earlyAvgTemp = earlyTemps.reduce(0, +) / Double(earlyTemps.count)
+                let lateAvgTemp = lateTemps.reduce(0, +) / Double(lateTemps.count)
+                let tempDelta = lateAvgTemp - earlyAvgTemp
+                let note = abs(tempDelta) >= 10 ? " ⚠️ HR not comparable" : ""
+                print("    Temp:  \(String(format: "%.0f", earlyAvgTemp)) → \(String(format: "%.0f", lateAvgTemp))°F (\(String(format: "%+.0f", tempDelta)))\(note)")
+            }
+
             // Efficiency: output per heartbeat (higher = fitter). On a trainer the
             // speed shown is computed back from power, so mph/bpm just restates
             // W/bpm with extra noise — use watts directly when they're available.
@@ -678,6 +723,19 @@ struct SettingsTabView: View {
         if !excluded.isEmpty {
             print("")
             print("  (\(excluded.count) rides under \(Int(RouteClusteringService.minimumRideDuration / 60)) min excluded — too short to be a route)")
+        }
+
+        let discrepancies = TSSAuditService.audit(rideHistory.rides, profile: UserProfile.load())
+        if !discrepancies.isEmpty {
+            print("")
+            print("── DATA QUALITY ───────────────────────────────────")
+            print("  \(discrepancies.count) rides have a TSS that matches neither their HR nor their power:")
+            for item in discrepancies {
+                let hr = item.heartRateTSS.map { String(format: "%.0f", $0) } ?? "—"
+                let power = item.powerTSS.map { String(format: "%.0f", $0) } ?? "—"
+                print("  \(formatter.string(from: item.ride.date)): stored \(String(format: "%.0f", item.storedTSS)) | from HR \(hr) | from power \(power)")
+            }
+            print("  Fix via Settings → Repair Suspect TSS")
         }
 
         print("")
@@ -915,6 +973,26 @@ struct SettingsTabView: View {
 
         try? await Task.sleep(nanoseconds: 5_000_000_000)
         await MainActor.run { tssRecalcProgress = "" }
+    }
+
+    /// Rescores rides whose stored TSS matches neither of their own signals.
+    private func repairSuspectTSS() {
+        let discrepancies = suspectTSS
+        var repaired = 0
+
+        for item in discrepancies {
+            guard let corrected = item.suggestedTSS else {
+                print("⚠️ No usable signal to repair TSS for \(item.ride.formattedDate)")
+                continue
+            }
+            rideHistory.updateRide(item.ride.id, with: item.ride.replacingTSS(corrected))
+            repaired += 1
+            print("🔧 Repaired TSS \(item.ride.formattedDate): \(String(format: "%.0f", item.storedTSS)) → \(String(format: "%.0f", corrected))")
+        }
+
+        guard repaired > 0 else { return }
+        trainingLoadManager.syncFromRides(rideHistory.rides)
+        print("✅ Repaired \(repaired) rides, training load resynced")
     }
 
     private func runLTHREstimation() async {
