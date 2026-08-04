@@ -24,6 +24,7 @@ struct ManualRideEntryView: View {
     @State private var showingError = false
     @State private var errorMessage = ""
     @State private var showingSuccess = false
+    @State private var showingPowerWarning = false
 
     var body: some View {
         NavigationStack {
@@ -46,6 +47,16 @@ struct ManualRideEntryView: View {
                     numberField("Avg Cadence (rpm)", text: $averageCadence)
                     numberField("Avg Heart Rate (bpm)", text: $averageHR)
                     numberField("Max Heart Rate (bpm)", text: $maxHR)
+
+                    if let verdict = powerVerdict {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(verdict.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 Section("Notes") {
@@ -88,6 +99,12 @@ struct ManualRideEntryView: View {
             } message: {
                 Text("Ride added to Tailwind and written to Apple Health. Your Move ring should update shortly.")
             }
+            .alert("Check Average Power", isPresented: $showingPowerWarning) {
+                Button("Let Me Fix It", role: .cancel) { }
+                Button("Save Anyway") { performSave() }
+            } message: {
+                Text(powerVerdict?.message ?? "")
+            }
         }
     }
 
@@ -95,6 +112,17 @@ struct ManualRideEntryView: View {
         guard let dur = Double(durationMinutes), dur > 0 else { return false }
         guard let cal = Double(calories), cal > 0 else { return false }
         return true
+    }
+
+    /// Complaint about the typed power, if it contradicts the rider's own measured
+    /// power-to-heart-rate relationship. Nil until both fields are filled in.
+    private var powerVerdict: PowerPlausibilityService.Verdict? {
+        guard let power = Double(averagePower), let hr = Double(averageHR) else { return nil }
+        return PowerPlausibilityService.check(
+            typedPower: power,
+            averageHeartRate: hr,
+            rides: rideHistory.rides
+        )
     }
 
     private func numberField(_ label: String, text: Binding<String>) -> some View {
@@ -108,7 +136,19 @@ struct ManualRideEntryView: View {
         }
     }
 
+    /// Saves, unless the typed power contradicts the rider's own history — that gets
+    /// one confirmation first. An inline caption alone is too easy to scroll past, and
+    /// a wrong figure here is invisible afterwards: it silently becomes this ride's
+    /// training load and survives the TSS audit intact.
     private func saveRide() {
+        guard powerVerdict == nil else {
+            showingPowerWarning = true
+            return
+        }
+        performSave()
+    }
+
+    private func performSave() {
         guard let dur = Double(durationMinutes), dur > 0,
               let cal = Double(calories), cal > 0 else { return }
 
