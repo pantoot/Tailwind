@@ -54,42 +54,54 @@ struct HeartRateZones: Codable {
             case .zone5: return 1.2   // 120 TSS per hour
             }
         }
+
+        /// Where the zone starts, as a fraction of LTHR.
+        ///
+        /// Zones are defined by their floor alone. The textbook table quotes closed
+        /// bands (Z2 = 81–89%, Z3 = 90–93%), but truncating *both* edges to whole
+        /// beats leaves beats that no band claims — at LTHR 150 nothing owned 134,
+        /// 140, or 149, and those samples fell through to Zone 1 and were scored as
+        /// recovery. Deriving each ceiling from the next zone's floor makes the
+        /// bands tile the integers, so a gap cannot reappear.
+        var lowerBoundFraction: Double {
+            switch self {
+            case .zone1: return 0
+            case .zone2: return 0.81
+            case .zone3: return 0.90
+            case .zone4: return 0.94
+            case .zone5: return 1.00  // LTHR itself
+            }
+        }
+    }
+
+    /// Ceiling of the top zone. Heart rates above it still score as Zone 5 —
+    /// `zone(for:)` compares against floors, so it has no upper bound to escape.
+    static let maximumHeartRate = 220
+
+    /// First beat belonging to the zone.
+    func lowerBound(for zone: Zone) -> Int {
+        Int(Double(lthr) * zone.lowerBoundFraction)
     }
 
     // Zone ranges as percentages of LTHR
     func range(for zone: Zone) -> ClosedRange<Int> {
-        let lower: Int
-        let upper: Int
+        let lower = lowerBound(for: zone)
 
-        switch zone {
-        case .zone1:
-            lower = 0
-            upper = Int(Double(lthr) * 0.80)
-        case .zone2:
-            lower = Int(Double(lthr) * 0.81)
-            upper = Int(Double(lthr) * 0.89)
-        case .zone3:
-            lower = Int(Double(lthr) * 0.90)
-            upper = Int(Double(lthr) * 0.93)
-        case .zone4:
-            lower = Int(Double(lthr) * 0.94)
-            upper = Int(Double(lthr) * 0.99)
-        case .zone5:
-            lower = lthr
-            upper = 220  // Effectively unlimited
+        guard let next = Zone(rawValue: zone.rawValue + 1) else {
+            return lower...max(lower, Self.maximumHeartRate)
         }
 
-        return lower...upper
+        // `max` guards a nonsensically low LTHR, where two floors can truncate to
+        // the same beat and would otherwise form an invalid (crashing) range.
+        return lower...max(lower, lowerBound(for: next) - 1)
     }
 
     // Get zone for a given heart rate
     func zone(for heartRate: Int) -> Zone {
-        for zone in Zone.allCases {
-            if range(for: zone).contains(heartRate) {
-                return zone
-            }
-        }
-        return .zone1  // Default to recovery if below all zones
+        // Highest zone whose floor the heart rate has reached. Gap-free by
+        // construction, and unlike a range scan it still classifies a sensor
+        // glitch above `maximumHeartRate` as Zone 5 rather than recovery.
+        Zone.allCases.last { heartRate >= lowerBound(for: $0) } ?? .zone1
     }
 
     // Get zone as a String for display
