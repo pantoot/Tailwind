@@ -3,6 +3,7 @@ import SwiftUI
 struct RideHistoryView: View {
     @EnvironmentObject var rideHistory: RideHistory
     @EnvironmentObject var healthKitService: HealthKitService
+    @EnvironmentObject var trainingLoadManager: TrainingLoadManager
     @Environment(\.dismiss) var dismiss
     @State private var selectedRide: Ride?
     @State private var showingFixAlert = false
@@ -282,14 +283,20 @@ struct RideHistoryView: View {
 
     // Delete rides within a specific month
     private func deleteRidesInMonth(monthKey: String, offsets: IndexSet) {
-        guard let monthRides = groupedRides[monthKey] else { return }
+        // Offsets come from the displayed (date-sorted) list, so they must index the
+        // same sorted array — groupedRides is insertion-ordered and can disagree with
+        // the display after a backfill import, deleting the wrong ride.
+        let monthRides = sortedRidesForMonth(monthKey)
+        let ridesToDelete = offsets.compactMap { monthRides.indices.contains($0) ? monthRides[$0] : nil }
 
-        // Get the ride IDs to delete
-        let ridesToDelete = offsets.map { monthRides[$0] }
-
-        // Delete from main rides array
         for ride in ridesToDelete {
             rideHistory.deleteRide(ride)
+        }
+
+        // The deleted ride's TSS stays in the day bucket otherwise, skewing CTL/ATL
+        // until the next launch-time sync.
+        if !ridesToDelete.isEmpty {
+            trainingLoadManager.syncFromRides(rideHistory.rides)
         }
     }
 

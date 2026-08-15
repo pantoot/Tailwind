@@ -251,9 +251,9 @@ struct RideDetailView: View {
             .sheet(isPresented: $showingEdit) {
                 EditRideView(ride: ride) { updatedRide in
                     rideHistory.updateRide(ride.id, with: updatedRide)
-                    if let tss = updatedRide.hrTSS {
-                        trainingLoadManager.addTSS(date: updatedRide.date, tss: tss)
-                    }
+                    // Rebuild rather than addTSS: the day bucket already holds this
+                    // ride's original score, so adding would double-count it.
+                    trainingLoadManager.syncFromRides(rideHistory.rides)
                     ride = updatedRide
                 }
             }
@@ -481,10 +481,9 @@ struct RideDetailView: View {
             await MainActor.run {
                 rideHistory.updateRide(ride.id, with: updatedRide)
 
-                // Add TSS to training load if calculated
-                if let tss = updatedRide.hrTSS {
-                    trainingLoadManager.addTSS(date: updatedRide.date, tss: tss)
-                }
+                // Rebuild rather than addTSS: the day bucket may already hold this
+                // ride's pre-merge score, so adding would double-count it.
+                trainingLoadManager.syncFromRides(rideHistory.rides)
 
                 // Update local state so UI refreshes
                 ride = updatedRide

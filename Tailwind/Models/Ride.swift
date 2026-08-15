@@ -322,6 +322,11 @@ struct Ride: Identifiable, Codable {
 class RideHistory: ObservableObject {
     @Published var rides: [Ride] = []
 
+    /// Set when writing rides.json fails — the in-memory list is then newer than
+    /// disk, and anything "saved" this session would vanish on relaunch. Views
+    /// surface this; it clears on the next successful write.
+    @Published var persistErrorMessage: String?
+
     private let store: RideStore
 
     /// Upper bound on stored rides — roughly three years at Rick's volume. Rides
@@ -618,7 +623,11 @@ class RideHistory: ObservableObject {
                     averagePower: ride.averagePower,
                     averageCadence: ride.averageCadence,
                     elevationGain: ride.elevationGain,
+                    averageTemperatureCelsius: ride.averageTemperatureCelsius,
                     routeCoordinates: ride.routeCoordinates,
+                    // Tracks live on disk, so routeCoordinates is nil here — without an
+                    // explicit count the init would zero it and orphan the GPS track.
+                    routePointCount: ride.routePointCount,
                     notes: ride.notes,
                     bikeName: ride.bikeName,
                     bikeType: ride.bikeType,
@@ -677,8 +686,10 @@ class RideHistory: ObservableObject {
     private func persistRides() {
         do {
             try store.save(rides)
+            persistErrorMessage = nil
             print("✅ Successfully saved \(rides.count) rides")
         } catch {
+            persistErrorMessage = "Rides could not be saved to disk: \(error.localizedDescription). Recent changes may be lost when the app closes."
             print("❌ ERROR: Failed to save rides: \(error.localizedDescription)")
         }
 

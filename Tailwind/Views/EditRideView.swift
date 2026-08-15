@@ -26,7 +26,18 @@ struct EditRideView: View {
         _notes = State(initialValue: ride.notes ?? "")
     }
 
+    /// Whether the user actually edited the average HR field this session.
+    private var hrChanged: Bool {
+        let original = ride.averageHeartRate > 0 ? String(format: "%.0f", ride.averageHeartRate) : ""
+        return avgHeartRate != original
+    }
+
     private var computedTSS: Double? {
+        // Keep the stored score (which may be NP/power-based) unless HR was actually
+        // edited — recomputing from HR here would silently switch methodology on
+        // every unrelated edit.
+        guard hrChanged else { return ride.hrTSS }
+
         let profile = UserProfile.load()
         let dur = ride.duration
         guard dur > 0 else { return nil }
@@ -116,6 +127,7 @@ struct EditRideView: View {
             averagePower: ride.averagePower,
             averageCadence: ride.averageCadence,
             elevationGain: ride.elevationGain,
+            averageTemperatureCelsius: ride.averageTemperatureCelsius,
             routeCoordinates: ride.routeCoordinates,
             routePointCount: ride.routePointCount,
             notes: notes.isEmpty ? ride.notes : notes,

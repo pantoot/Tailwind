@@ -70,16 +70,25 @@ extension UserProfile {
     private static let profileKey = "UserProfile"
 
     static func load() -> UserProfile {
-        guard let data = UserDefaults.standard.data(forKey: profileKey),
-              let profile = try? JSONDecoder().decode(UserProfile.self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: profileKey) else {
             return .default
         }
-        return profile
+        do {
+            return try JSONDecoder().decode(UserProfile.self, from: data)
+        } catch {
+            // Falling back to .default silently would reset LTHR/FTP — the inputs
+            // to every TSS and zone calculation — with no diagnostic trail.
+            print("❌ ERROR: UserProfile decode failed, falling back to defaults (LTHR/FTP lost!): \(error)")
+            return .default
+        }
     }
 
     func save() {
-        if let data = try? JSONEncoder().encode(self) {
+        do {
+            let data = try JSONEncoder().encode(self)
             UserDefaults.standard.set(data, forKey: UserProfile.profileKey)
+        } catch {
+            print("❌ ERROR: UserProfile save failed — edits will not persist: \(error)")
         }
     }
 }

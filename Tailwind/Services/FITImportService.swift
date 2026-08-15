@@ -88,7 +88,6 @@ class FITImportService: ObservableObject {
 
     @Published var isImporting = false
     @Published var lastImportedRide: Ride?
-    @Published var importError: ImportError?
 
     private let healthKitService: HealthKitService
     private let rideHistory: RideHistory
@@ -407,7 +406,10 @@ class FITImportService: ObservableObject {
             averageHeartRate: avgHR,
             maxHeartRate: maxHR,
             calories: newCalories > 0 ? newCalories : ride.calories,
+            averagePower: ride.averagePower,
+            averageCadence: ride.averageCadence,
             elevationGain: ride.elevationGain,
+            averageTemperatureCelsius: ride.averageTemperatureCelsius,
             routeCoordinates: ride.routeCoordinates,
             routePointCount: ride.routePointCount,
             notes: (ride.notes ?? "") + " (Watch HR merged)",

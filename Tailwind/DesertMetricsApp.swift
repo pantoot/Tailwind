@@ -17,6 +17,13 @@ struct TailwindApp: App {
 
     @State private var selectedTab = 0
 
+    /// Guards against two overlapping pending-import sweeps (onAppear + foreground
+    /// can both fire within the same half-second).
+    @State private var isProcessingPendingImports = false
+
+    /// Set when any import path fails; drives the user-visible alert.
+    @State private var importFailureMessage: String?
+
     var body: some Scene {
         WindowGroup {
             TabView(selection: $selectedTab) {
@@ -62,6 +69,14 @@ struct TailwindApp: App {
                         }
                     }
                 }
+                .alert("Import Failed", isPresented: Binding(
+                    get: { importFailureMessage != nil },
+                    set: { if !$0 { importFailureMessage = nil } }
+                )) {
+                    Button("OK") { }
+                } message: {
+                    Text(importFailureMessage ?? "")
+                }
         }
     }
 
@@ -103,6 +118,13 @@ struct TailwindApp: App {
                         try? FileManager.default.removeItem(at: fileURL)
                     } catch {
                         print("❌ Failed to import from URL: \(error)")
+                        // The file was dequeued before parsing to prevent a
+                        // double-import race — put it back so a retry is possible,
+                        // and tell the user instead of failing silently.
+                        await MainActor.run {
+                            requeuePendingImport(path: filePath)
+                            importFailureMessage = "Could not import \(fileURL.lastPathComponent): \(error.localizedDescription)"
+                        }
                     }
                 }
             } else {
@@ -129,6 +151,9 @@ struct TailwindApp: App {
                     await MainActor.run { selectedTab = 1 }
                 } catch {
                     print("❌ Failed to import FIT file: \(error)")
+                    await MainActor.run {
+                        importFailureMessage = "Could not import \(url.lastPathComponent): \(error.localizedDescription)"
+                    }
                 }
             }
         } else {
@@ -147,6 +172,17 @@ struct TailwindApp: App {
         }
     }
 
+    /// Put a failed import back in the queue so the next foreground retries it.
+    private func requeuePendingImport(path: String) {
+        guard let defaults = sharedDefaults else { return }
+        var pending = defaults.stringArray(forKey: "pendingFITImports") ?? []
+        if !pending.contains(path) {
+            pending.append(path)
+            defaults.set(pending, forKey: "pendingFITImports")
+            print("📥 Re-queued failed import: \(path)")
+        }
+    }
+
     /// Process any FIT files shared via the extension while app was closed
     private func processPendingImports() {
         print("📋 Checking for pending imports...")
@@ -161,18 +197,26 @@ struct TailwindApp: App {
 
         print("📋 Found \(pendingPaths.count) pending imports: \(pendingPaths)")
 
-        // Clear the pending list
-        defaults.removeObject(forKey: "pendingFITImports")
+        // Entries stay queued until their import actually succeeds — clearing the
+        // list up front meant a failed parse silently lost the ride forever.
+        guard !isProcessingPendingImports else {
+            print("📋 Pending-import sweep already running, skipping")
+            return
+        }
+        isProcessingPendingImports = true
 
         // Import each pending file
         Task {
+            defer { Task { @MainActor in isProcessingPendingImports = false } }
+            var failures: [String] = []
+
             for path in pendingPaths {
                 let url = URL(fileURLWithPath: path)
                 print("📋 Processing: \(path)")
-                print("📋 File exists: \(FileManager.default.fileExists(atPath: path))")
 
                 guard FileManager.default.fileExists(atPath: path) else {
-                    print("⚠️ File not found, skipping: \(path)")
+                    print("⚠️ File not found, dropping from queue: \(path)")
+                    await MainActor.run { clearPendingImport(path: path) }
                     continue
                 }
 
@@ -187,14 +231,24 @@ struct TailwindApp: App {
                         print("📊 Added TSS: \(String(format: "%.0f", tss))")
                     }
 
-                    // Switch to Rides tab
-                    await MainActor.run { selectedTab = 1 }
+                    await MainActor.run {
+                        // Dequeue only now that the import has fully succeeded
+                        clearPendingImport(path: path)
+                        selectedTab = 1
+                    }
 
                     // Clean up after successful import
                     try? FileManager.default.removeItem(at: url)
                     print("✅ Processed pending import: \(ride.formattedDate), \(ride.formattedDistance)")
                 } catch {
-                    print("❌ Failed pending import: \(error)")
+                    print("❌ Failed pending import (kept in queue for retry): \(error)")
+                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+
+            if !failures.isEmpty {
+                await MainActor.run {
+                    importFailureMessage = "Some shared rides could not be imported. They will be retried next launch.\n\n" + failures.joined(separator: "\n")
                 }
             }
         }

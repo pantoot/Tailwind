@@ -87,11 +87,9 @@ class HealthKitService: ObservableObject {
             // Start building
             try await builder.beginCollection(at: startDate)
 
-            // Add heart rate samples if we have HR data
-            if ride.averageHeartRate > 0 {
-                let heartRateSamples = createHeartRateSamples(for: ride)
-                try await builder.addSamples(heartRateSamples)
-            }
+            // Average HR travels in the workout metadata below. Deliberately no
+            // per-sample HR here: this path has no real samples, and synthetic ones
+            // would later be read back as genuine data by LTHR estimation.
 
             // Add distance sample
             let distanceSample = HKQuantitySample(
@@ -149,11 +147,6 @@ class HealthKitService: ObservableObject {
 
             var samples: [HKSample] = []
 
-            if ride.averageHeartRate > 0 {
-                let heartRateSamples = createHeartRateSamples(for: ride)
-                samples.append(contentsOf: heartRateSamples)
-            }
-
             let distanceSample = HKQuantitySample(
                 type: HKQuantityType.quantityType(forIdentifier: .distanceCycling)!,
                 quantity: HKQuantity(unit: .mile(), doubleValue: ride.distance),
@@ -176,34 +169,6 @@ class HealthKitService: ObservableObject {
 
             print("✅ Saved ride to HealthKit: \(ride.distance) mi, \(ride.calories) cal")
         }
-    }
-
-    // Create heart rate samples distributed across the ride
-    private func createHeartRateSamples(for ride: Ride) -> [HKQuantitySample] {
-        let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-        var samples: [HKQuantitySample] = []
-
-        // Create samples every 5 minutes
-        let sampleInterval: TimeInterval = 300 // 5 minutes
-        let numberOfSamples = max(1, Int(ride.duration / sampleInterval))
-
-        for i in 0..<numberOfSamples {
-            let timestamp = ride.date.addingTimeInterval(Double(i) * sampleInterval)
-
-            // Vary heart rate slightly around average for more realistic data
-            let variation = Double.random(in: -5...5)
-            let heartRate = max(60, min(200, ride.averageHeartRate + variation))
-
-            let sample = HKQuantitySample(
-                type: heartRateType,
-                quantity: HKQuantity(unit: HKUnit.count().unitDivided(by: .minute()), doubleValue: heartRate),
-                start: timestamp,
-                end: timestamp
-            )
-            samples.append(sample)
-        }
-
-        return samples
     }
 
     // Update a ride in HealthKit (delete old workout and save corrected version)
@@ -251,12 +216,16 @@ class HealthKitService: ObservableObject {
             healthStore.execute(query)
         }
 
-        // Delete matching workouts
-        for workout in workouts {
+        // Only delete workouts Tailwind itself created. A ride imported from
+        // Apple Health sits in the same time window as the original Peloton/Zwift
+        // workout — deleting by window alone would destroy the third-party original.
+        let tailwindWorkouts = workouts.filter { $0.metadata?["Tailwind"] as? Bool == true }
+
+        for workout in tailwindWorkouts {
             try await healthStore.delete(workout)
         }
 
-        print("🗑️ Deleted ride from HealthKit")
+        print("🗑️ Deleted \(tailwindWorkouts.count) Tailwind workout(s) from HealthKit (\(workouts.count - tailwindWorkouts.count) third-party left untouched)")
     }
 
     // MARK: - Delete Tailwind Workouts

@@ -73,6 +73,14 @@ struct RidesTabView: View {
         } message: {
             Text(errorMessage)
         }
+        .alert("Save Failed", isPresented: Binding(
+            get: { rideHistory.persistErrorMessage != nil },
+            set: { if !$0 { rideHistory.persistErrorMessage = nil } }
+        )) {
+            Button("OK") { }
+        } message: {
+            Text(rideHistory.persistErrorMessage ?? "")
+        }
         .sheet(isPresented: $showingManualEntry) {
             ManualRideEntryView()
                 .environmentObject(healthKitService)

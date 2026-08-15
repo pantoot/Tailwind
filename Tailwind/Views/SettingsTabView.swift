@@ -853,6 +853,7 @@ struct SettingsTabView: View {
                     averagePower: metrics.averagePower,
                     averageCadence: ride.averageCadence,
                     elevationGain: ride.elevationGain,
+                    averageTemperatureCelsius: ride.averageTemperatureCelsius,
                     routeCoordinates: ride.routeCoordinates,
                     routePointCount: ride.routePointCount,
                     notes: ride.notes,
