@@ -180,7 +180,7 @@ Contributions are welcome! Here's how:
 
 ```bash
 # Generate app icons
-cd /Users/rick/projects/bike/DesertMetrics
+cd /Users/rick/projects/rick-personal/bike/DesertMetrics
 source /tmp/icon_venv/bin/activate
 python3 generate_app_icon.py
 ```
