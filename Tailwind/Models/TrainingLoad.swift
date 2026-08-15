@@ -16,11 +16,18 @@ struct DailyTrainingLoad: Codable, Identifiable {
         self.tss = tss
     }
 
-    // Normalize date to start of day for comparison
-    var dateKey: String {
+    // Shared: the EMA walk computes a key per day-step, thousands per chart
+    // render — allocating a DateFormatter each time was the hot path. All use is
+    // main-thread (DateFormatter is not thread-safe).
+    private static let keyFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    // Normalize date to start of day for comparison
+    var dateKey: String {
+        Self.keyFormatter.string(from: date)
     }
 }
 
@@ -208,25 +215,27 @@ class TrainingLoadManager: ObservableObject {
         // Get all loads up to and including this date
         let relevantLoads = dailyLoads.filter { $0.date <= normalizedDate }
 
-        // Calculate CTL (42-day exponential weighted average)
-        let ctl = calculateExponentialAverage(loads: relevantLoads, days: 42, asOf: normalizedDate)
-
-        // Calculate ATL (7-day exponential weighted average)
-        let atl = calculateExponentialAverage(loads: relevantLoads, days: 7, asOf: normalizedDate)
+        // Each walk yields today's AND yesterday's value, so TSB costs nothing
+        // extra (this runs 31x per form-chart render — walks are not free).
+        let (ctl, ctlYesterday) = calculateExponentialAverages(loads: relevantLoads, days: 42, asOf: normalizedDate)
+        let (atl, atlYesterday) = calculateExponentialAverages(loads: relevantLoads, days: 7, asOf: normalizedDate)
 
         // TSB (Form) is what you woke up with: yesterday's CTL minus yesterday's
         // ATL (TrainingPeaks convention). Using today's values would move today's
         // ride into today's form and shift the whole form chart a day early.
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: normalizedDate) ?? normalizedDate
-        let tsb = calculateExponentialAverage(loads: relevantLoads, days: 42, asOf: yesterday)
-                - calculateExponentialAverage(loads: relevantLoads, days: 7, asOf: yesterday)
+        let tsb = ctlYesterday - atlYesterday
 
         return PerformanceMetrics(ctl: ctl, atl: atl, tsb: tsb)
     }
 
     // Exponential weighted moving average calculation
     private func calculateExponentialAverage(loads: [DailyTrainingLoad], days: Int, asOf date: Date) -> Double {
-        guard !loads.isEmpty else { return 0 }
+        calculateExponentialAverages(loads: loads, days: days, asOf: date).current
+    }
+
+    /// One walk, two readings: the average as of `date` and as of the day before.
+    private func calculateExponentialAverages(loads: [DailyTrainingLoad], days: Int, asOf date: Date) -> (current: Double, previous: Double) {
+        guard !loads.isEmpty else { return (0, 0) }
 
         let calendar = Calendar.current
         // TrainingPeaks/Coggan impulse-response constant: k = 1/N, i.e.
@@ -248,18 +257,21 @@ class TrainingLoadManager: ObservableObject {
         }
 
         // Calculate exponential moving average
+        var previousAverage: Double = 0
         var currentDate = startDate
         while currentDate <= date {
             let dateKey = DailyTrainingLoad(date: currentDate, tss: 0).dateKey
             let todayTSS = tssMap[dateKey] ?? 0
 
             // EMA formula: EMA = (Today's TSS * k) + (Yesterday's EMA * (1 - k))
+            previousAverage = average
             average = (todayTSS * exponentialConstant) + (average * (1 - exponentialConstant))
 
             currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? date
         }
 
-        return average
+        // After the final iteration, previousAverage is the value as of date−1.
+        return (average, previousAverage)
     }
 
     // Get historical metrics for charting

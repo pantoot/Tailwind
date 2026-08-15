@@ -133,8 +133,10 @@ struct CreatineAnalysisService {
         }
 
         guard knownIndices.count >= 2 else {
-            // Single sample or empty — fill entire array with that value
-            if let single = knownIndices.first {
+            // Single sample or empty. Zero-fill streams keep just the one real
+            // sample — flooding a 2-hour ride with one speed reading would mark
+            // the whole ride "moving". Interpolated streams keep the old behavior.
+            if let single = knownIndices.first, zeroFillGapsLongerThan == nil {
                 result = [Double](repeating: single.value, count: count)
             }
             return result
@@ -155,12 +157,15 @@ struct CreatineAnalysisService {
             }
         }
 
-        // Extend edges
+        // Extend edges. Zero-fill streams only extend across a short gap — a speed
+        // stream that ends mid-ride must not claim the rest of the ride was moving.
         if let first = knownIndices.first {
-            for i in 0..<first.index { result[i] = first.value }
+            let start = zeroFillGapsLongerThan.map { max(0, first.index - $0) } ?? 0
+            for i in start..<first.index { result[i] = first.value }
         }
         if let last = knownIndices.last {
-            for i in (last.index + 1)..<count { result[i] = last.value }
+            let end = zeroFillGapsLongerThan.map { min(count, last.index + 1 + $0) } ?? count
+            for i in (last.index + 1)..<end { result[i] = last.value }
         }
 
         return result

@@ -45,10 +45,16 @@ struct SettingsTabView: View {
     @State private var lthrProgress = ""
     @State private var showingLTHRResult = false
 
+    /// Weight as loaded at init — Save only overrides the profile weight when the
+    /// field was actually edited, so a weight-log sync that landed while this view
+    /// held stale state isn't silently reverted.
+    private let initialWeight: Double
+
     init() {
         let profile = UserProfile.load()
         _birthday = State(initialValue: profile.birthday)
         _weight = State(initialValue: profile.weight)
+        initialWeight = profile.weight
         _gender = State(initialValue: profile.gender)
         _lactateThresholdHR = State(initialValue: profile.lactateThresholdHR.map { String($0) } ?? "")
         _maxHeartRate = State(initialValue: profile.maxHeartRate.map { String($0) } ?? "")
@@ -136,7 +142,7 @@ struct SettingsTabView: View {
 
                     // Shown only until a real max HR is entered — with one set, the
                     // age formula is just clutter next to a better number.
-                    if Int(maxHeartRate) == nil {
+                    if (Int(maxHeartRate) ?? 0) <= 0 {
                         HStack {
                             Text("Estimated Max HR")
                             Spacer()
@@ -493,16 +499,36 @@ struct SettingsTabView: View {
 
     private func saveProfile() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+
+        // The weight log owns weight. If the field wasn't edited here, keep
+        // whatever the freshest profile says (a log sync may have updated it since
+        // this view loaded); if it was edited, that edit also goes into the log so
+        // the two sources can't drift.
+        let weightEdited = abs(weight - initialWeight) > 0.01
+        let effectiveWeight = weightEdited ? weight : UserProfile.load().weight
+
         let profile = UserProfile(
             birthday: birthday,
-            weight: weight,
+            weight: effectiveWeight,
             gender: gender,
-            lactateThresholdHR: Int(lactateThresholdHR),
-            maxHeartRate: Int(maxHeartRate),
-            ftp: Int(ftpWatts)
+            lactateThresholdHR: positiveInt(lactateThresholdHR),
+            maxHeartRate: positiveInt(maxHeartRate),
+            ftp: positiveInt(ftpWatts)
         )
         profile.save()
+
+        if weightEdited {
+            weightLogManager.addEntry(WeightEntry(weightLbs: weight))
+        }
+
         showingSaveConfirmation = true
+    }
+
+    /// A typed "0" must store as nil, not 0 — a zero LTHR/FTP/max HR would poison
+    /// every downstream division and threshold.
+    private func positiveInt(_ text: String) -> Int? {
+        guard let value = Int(text), value > 0 else { return nil }
+        return value
     }
 
     private func cleanUpDuplicates() {

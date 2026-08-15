@@ -21,6 +21,19 @@ struct TailwindApp: App {
     /// can both fire within the same half-second).
     @State private var isProcessingPendingImports = false
 
+    /// Paths currently being imported. The share extension both queues a file AND
+    /// fires the tailwind:// URL, so the URL handler and the queue sweep can race
+    /// on the same file; checked-and-inserted synchronously on the MainActor before
+    /// any await, this closes that window. (The in-log overlap check alone can't —
+    /// both tasks pass it before either has saved.)
+    @State private var importsInFlight: Set<String> = []
+
+    /// After this many failed attempts a queued file is dropped for good, so a
+    /// corrupt FIT doesn't re-alert on every launch forever. Counts live in the
+    /// App Group defaults to survive relaunches.
+    private let maxImportRetries = 3
+    private let retryCountsKey = "pendingImportRetryCounts"
+
     /// Set when any import path fails; drives the user-visible alert.
     @State private var importFailureMessage: String?
 
@@ -95,10 +108,19 @@ struct TailwindApp: App {
                 print("📥 File path: \(filePath)")
                 print("📥 File exists: \(FileManager.default.fileExists(atPath: filePath))")
 
+                // Synchronous check-and-claim before any await — the queue sweep
+                // may already be importing this exact file.
+                guard !importsInFlight.contains(filePath) else {
+                    print("📥 Skipping URL import — already in flight: \(filePath)")
+                    return
+                }
+                importsInFlight.insert(filePath)
+
                 // Clear this file from pending imports to prevent double-import
                 clearPendingImport(path: filePath)
 
                 Task {
+                    defer { importsInFlight.remove(filePath) }
                     do {
                         let ride = try await services.fitImportService.importFITFile(from: fileURL)
                         print("✅ Successfully imported ride: \(ride.formattedDate), \(ride.formattedDistance)")
@@ -116,18 +138,28 @@ struct TailwindApp: App {
 
                         // Clean up the temp file after import
                         try? FileManager.default.removeItem(at: fileURL)
+                        clearImportFailures(path: filePath)
                     } catch FITImportService.ImportError.duplicateRide {
                         // Terminal, not retryable — re-queueing would alert forever.
                         print("⚠️ Duplicate FIT import ignored: \(filePath)")
                         try? FileManager.default.removeItem(at: fileURL)
+                        clearImportFailures(path: filePath)
                     } catch {
                         print("❌ Failed to import from URL: \(error)")
                         // The file was dequeued before parsing to prevent a
                         // double-import race — put it back so a retry is possible,
-                        // and tell the user instead of failing silently.
+                        // and tell the user instead of failing silently. After the
+                        // retry cap, give up so a corrupt file can't alert forever.
+                        let failures = recordImportFailure(path: filePath)
                         await MainActor.run {
-                            requeuePendingImport(path: filePath)
-                            importFailureMessage = "Could not import \(fileURL.lastPathComponent): \(error.localizedDescription)"
+                            if failures >= maxImportRetries {
+                                clearImportFailures(path: filePath)
+                                try? FileManager.default.removeItem(at: fileURL)
+                                importFailureMessage = "Could not import \(fileURL.lastPathComponent) after \(failures) attempts — giving up. Re-share the file to try again. (\(error.localizedDescription))"
+                            } else {
+                                requeuePendingImport(path: filePath)
+                                importFailureMessage = "Could not import \(fileURL.lastPathComponent): \(error.localizedDescription)"
+                            }
                         }
                     }
                 }
@@ -187,6 +219,25 @@ struct TailwindApp: App {
         }
     }
 
+    /// Bump the persistent failure count for a queued path. Returns the new count.
+    private func recordImportFailure(path: String) -> Int {
+        guard let defaults = sharedDefaults else { return 1 }
+        var counts = (defaults.dictionary(forKey: retryCountsKey) as? [String: Int]) ?? [:]
+        let newCount = (counts[path] ?? 0) + 1
+        counts[path] = newCount
+        defaults.set(counts, forKey: retryCountsKey)
+        return newCount
+    }
+
+    /// Forget the failure count once a path succeeds or is dropped.
+    private func clearImportFailures(path: String) {
+        guard let defaults = sharedDefaults else { return }
+        var counts = (defaults.dictionary(forKey: retryCountsKey) as? [String: Int]) ?? [:]
+        if counts.removeValue(forKey: path) != nil {
+            defaults.set(counts, forKey: retryCountsKey)
+        }
+    }
+
     /// Process any FIT files shared via the extension while app was closed
     private func processPendingImports() {
         print("📋 Checking for pending imports...")
@@ -218,9 +269,21 @@ struct TailwindApp: App {
                 let url = URL(fileURLWithPath: path)
                 print("📋 Processing: \(path)")
 
+                // Claim the path before any await — the URL handler may race us
+                // on the same file (the share extension fires both triggers).
+                guard !importsInFlight.contains(path) else {
+                    print("📋 Skipping — already in flight via URL handler: \(path)")
+                    continue
+                }
+                importsInFlight.insert(path)
+                defer { importsInFlight.remove(path) }
+
                 guard FileManager.default.fileExists(atPath: path) else {
                     print("⚠️ File not found, dropping from queue: \(path)")
-                    await MainActor.run { clearPendingImport(path: path) }
+                    await MainActor.run {
+                        clearPendingImport(path: path)
+                        clearImportFailures(path: path)
+                    }
                     continue
                 }
 
@@ -238,6 +301,7 @@ struct TailwindApp: App {
                     await MainActor.run {
                         // Dequeue only now that the import has fully succeeded
                         clearPendingImport(path: path)
+                        clearImportFailures(path: path)
                         selectedTab = 1
                     }
 
@@ -247,11 +311,25 @@ struct TailwindApp: App {
                 } catch FITImportService.ImportError.duplicateRide {
                     // Terminal, not retryable — dequeue so it doesn't alert forever.
                     print("⚠️ Duplicate pending import ignored: \(path)")
-                    await MainActor.run { clearPendingImport(path: path) }
+                    await MainActor.run {
+                        clearPendingImport(path: path)
+                        clearImportFailures(path: path)
+                    }
                     try? FileManager.default.removeItem(at: url)
                 } catch {
-                    print("❌ Failed pending import (kept in queue for retry): \(error)")
-                    failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                    let attempts = recordImportFailure(path: path)
+                    if attempts >= maxImportRetries {
+                        print("❌ Pending import failed \(attempts) times, giving up: \(error)")
+                        await MainActor.run {
+                            clearPendingImport(path: path)
+                            clearImportFailures(path: path)
+                        }
+                        try? FileManager.default.removeItem(at: url)
+                        failures.append("\(url.lastPathComponent): gave up after \(attempts) attempts (\(error.localizedDescription)). Re-share the file to try again.")
+                    } else {
+                        print("❌ Failed pending import (attempt \(attempts), kept for retry): \(error)")
+                        failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                    }
                 }
             }
 
