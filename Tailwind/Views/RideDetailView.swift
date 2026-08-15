@@ -22,6 +22,17 @@ struct RideDetailView: View {
     // Edit state
     @State private var showingEdit = false
 
+    // Export state
+    @State private var isExporting = false
+    @State private var exportShareItem: ExportShareItem?
+    @State private var showingExportError = false
+    @State private var exportErrorMessage = ""
+
+    private struct ExportShareItem: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
     var body: some View {
         NavigationView {
             ScrollView {
@@ -186,6 +197,19 @@ struct RideDetailView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 16) {
                         Button {
+                            Task {
+                                await exportRide()
+                            }
+                        } label: {
+                            if isExporting {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "square.and.arrow.up")
+                            }
+                        }
+                        .disabled(isExporting)
+
+                        Button {
                             showingEdit = true
                         } label: {
                             Image(systemName: "pencil")
@@ -215,6 +239,14 @@ struct RideDetailView: View {
                 Button("OK") { }
             } message: {
                 Text(mergeErrorMessage)
+            }
+            .alert("Export Failed", isPresented: $showingExportError) {
+                Button("OK") { }
+            } message: {
+                Text(exportErrorMessage)
+            }
+            .sheet(item: $exportShareItem) { item in
+                ShareSheet(activityItems: [item.url])
             }
             .sheet(isPresented: $showingEdit) {
                 EditRideView(ride: ride) { updatedRide in
@@ -353,6 +385,23 @@ struct RideDetailView: View {
             }
         }
         .padding(.vertical)
+    }
+
+    /// Package the ride + raw HealthKit streams into a JSON file and open the share sheet.
+    private func exportRide() async {
+        isExporting = true
+        defer { isExporting = false }
+
+        let samples = await healthKitService.fetchRawSamples(for: ride)
+        do {
+            let url = try RideExportService.writeExportFile(ride: ride, samples: samples)
+            print("📤 Exported \(url.lastPathComponent): \(samples.power.count) power, \(samples.heartRate.count) HR, \(samples.cadence.count) cadence samples")
+            exportShareItem = ExportShareItem(url: url)
+        } catch {
+            print("❌ Ride export failed: \(error.localizedDescription)")
+            exportErrorMessage = error.localizedDescription
+            showingExportError = true
+        }
     }
 
     private func formatOffset(_ seconds: TimeInterval) -> String {

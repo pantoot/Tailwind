@@ -24,6 +24,7 @@ class HealthKitService: ObservableObject {
         HKObjectType.quantityType(forIdentifier: .distanceCycling)!,
         HKObjectType.quantityType(forIdentifier: .heartRate)!,
         HKObjectType.quantityType(forIdentifier: .cyclingPower)!,
+        HKObjectType.quantityType(forIdentifier: .cyclingCadence)!,
         HKObjectType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!,
         HKObjectType.quantityType(forIdentifier: .bodyMass)!,
         HKObjectType.quantityType(forIdentifier: .leanBodyMass)!,
@@ -453,6 +454,9 @@ class HealthKitService: ObservableObject {
         let temperature = (workout.metadata?[HKMetadataKeyWeatherTemperature] as? HKQuantity)?
             .doubleValue(for: .degreeCelsius())
 
+        // Cadence, when the source app writes it (Peloton shows it in-app but may not)
+        let averageCadence = await fetchAverageCadence(for: workout)
+
         // Fetch power and HR samples for creatine analysis (Peloton, Zwift, etc.)
         let powerSamples = await fetchPowerSamples(for: workout)
         let creatineMetrics: CreatineMetrics?
@@ -493,7 +497,7 @@ class HealthKitService: ObservableObject {
             maxHeartRate: Int(heartRateData.max),
             calories: calories,
             averagePower: creatineMetrics?.averagePower,
-            averageCadence: nil,
+            averageCadence: averageCadence,
             elevationGain: nil,
             averageTemperatureCelsius: temperature,
             routeCoordinates: routeCoordinates,
@@ -1351,29 +1355,80 @@ class HealthKitService: ObservableObject {
         }
     }
 
-    /// Reanalyze an existing ride by fetching power + HR samples from HealthKit.
-    /// Returns updated CreatineMetrics if power data exists, nil otherwise.
-    /// Cap samples at 10800 (3 hours at 1Hz) to prevent memory issues.
-    func reanalyzePower(for ride: Ride) async -> CreatineMetrics? {
+    /// The raw 1Hz streams HealthKit holds for a ride's time window.
+    struct RawRideSamples {
+        let power: [(date: Date, watts: Double)]
+        let heartRate: [(date: Date, bpm: Double)]
+        let cadence: [(date: Date, rpm: Double)]
+    }
+
+    /// Cap raw-stream queries at 3 hours of 1Hz samples to prevent memory issues.
+    private static let rawSampleCap = 10800
+
+    /// Fetch the raw power + HR streams recorded during a ride.
+    /// Either stream can come back empty (no data, or a fetch error).
+    func fetchRawSamples(for ride: Ride) async -> RawRideSamples {
         let startDate = ride.date
         let endDate = startDate.addingTimeInterval(ride.duration)
-        let sampleCap = 10800
 
+        let power = await fetchQuantitySamples(
+            identifier: .cyclingPower,
+            unit: .watt(),
+            from: startDate,
+            to: endDate
+        )
+        let heartRate = await fetchQuantitySamples(
+            identifier: .heartRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            from: startDate,
+            to: endDate
+        )
+        let cadence = await fetchQuantitySamples(
+            identifier: .cyclingCadence,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            from: startDate,
+            to: endDate
+        )
+        return RawRideSamples(
+            power: power.map { (date: $0.date, watts: $0.value) },
+            heartRate: heartRate.map { (date: $0.date, bpm: $0.value) },
+            cadence: cadence.map { (date: $0.date, rpm: $0.value) }
+        )
+    }
+
+    /// Average cadence (rpm) recorded during a workout, or nil if the source
+    /// app didn't write cadence samples to HealthKit.
+    func fetchAverageCadence(for workout: HKWorkout) async -> Double? {
+        let samples = await fetchQuantitySamples(
+            identifier: .cyclingCadence,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            from: workout.startDate,
+            to: workout.endDate
+        )
+        guard !samples.isEmpty else { return nil }
+        return samples.reduce(0.0) { $0 + $1.value } / Double(samples.count)
+    }
+
+    /// Fetch capped, time-sorted quantity samples in a window. Returns [] on error.
+    private func fetchQuantitySamples(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        from startDate: Date,
+        to endDate: Date
+    ) async -> [(date: Date, value: Double)] {
+        let sampleType = HKQuantityType.quantityType(forIdentifier: identifier)!
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,
             end: endDate,
             options: .strictStartDate
         )
 
-        // Fetch power samples (capped)
-        let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower)!
-        let powerSamples: [(date: Date, watts: Double)]
         do {
             let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
                 let query = HKSampleQuery(
-                    sampleType: powerType,
+                    sampleType: sampleType,
                     predicate: predicate,
-                    limit: sampleCap,
+                    limit: Self.rawSampleCap,
                     sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
                 ) { _, results, error in
                     if let error = error {
@@ -1384,44 +1439,24 @@ class HealthKitService: ObservableObject {
                 }
                 healthStore.execute(query)
             }
-            let wattUnit = HKUnit.watt()
-            powerSamples = samples.map { (date: $0.startDate, watts: $0.quantity.doubleValue(for: wattUnit)) }
+            return samples.map { (date: $0.startDate, value: $0.quantity.doubleValue(for: unit)) }
         } catch {
-            return nil
+            print("❌ Sample fetch failed for \(identifier.rawValue): \(error.localizedDescription)")
+            return []
         }
+    }
 
-        guard !powerSamples.isEmpty else { return nil }
-
-        // Fetch HR samples (capped)
-        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
-        var hrSamples: [(date: Date, bpm: Double)] = []
-        do {
-            let samples: [HKQuantitySample] = try await withCheckedThrowingContinuation { continuation in
-                let query = HKSampleQuery(
-                    sampleType: hrType,
-                    predicate: predicate,
-                    limit: sampleCap,
-                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
-                ) { _, results, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: results as? [HKQuantitySample] ?? [])
-                    }
-                }
-                healthStore.execute(query)
-            }
-            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
-            hrSamples = samples.map { (date: $0.startDate, bpm: $0.quantity.doubleValue(for: bpmUnit)) }
-        } catch {
-            // HR is optional, continue without it
-        }
+    /// Reanalyze an existing ride by fetching power + HR samples from HealthKit.
+    /// Returns updated CreatineMetrics if power data exists, nil otherwise.
+    func reanalyzePower(for ride: Ride) async -> CreatineMetrics? {
+        let samples = await fetchRawSamples(for: ride)
+        guard !samples.power.isEmpty else { return nil }
 
         return CreatineAnalysisService.analyze(
-            power: powerSamples,
-            heartRate: hrSamples,
+            power: samples.power,
+            heartRate: samples.heartRate,
             speed: [],
-            rideStart: startDate,
+            rideStart: ride.date,
             settings: CreatineSettings.load()
         )
     }
