@@ -260,6 +260,14 @@ struct RideDetailView: View {
         }
     }
 
+    /// Post-block HR recovery quality: a fall of 15+ bpm within 90s is healthy,
+    /// under 8 suggests the recovery valley was ridden too hard to recover in.
+    private func blockRecoveryColor(_ delta: Int) -> Color {
+        if delta > 15 { return .green }
+        if delta > 8 { return .orange }
+        return .red
+    }
+
     @ViewBuilder
     private func creatineMetricsSection(_ cm: CreatineMetrics) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -312,6 +320,60 @@ struct RideDetailView: View {
                 .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
             }
             .padding(.horizontal)
+
+            if let np = cm.normalizedPower {
+                Text(String(format: "Normalized Power: %.0f W (VI %.2f)", np, np / max(cm.averagePower, 1)))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+
+            // Effort blocks — the structured intervals of the ride
+            if let blocks = cm.effortBlocks, !blocks.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Effort Blocks")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .padding(.horizontal)
+
+                    ForEach(blocks) { block in
+                        HStack {
+                            Text(formatOffset(block.startOffset))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 60, alignment: .leading)
+
+                            Text(String(format: "%.0f min", block.duration / 60))
+                                .font(.caption)
+                                .frame(width: 46, alignment: .leading)
+
+                            Text(String(format: "%.0f W", block.averagePower))
+                                .font(.caption)
+                                .fontWeight(.medium)
+
+                            Spacer()
+
+                            if let start = block.startHR, let end = block.endHR {
+                                Text("\(start) → \(end) bpm")
+                                    .font(.caption)
+                            }
+
+                            if let recovery = block.recoveryDelta {
+                                Text("-\(recovery)")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(blockRecoveryColor(recovery))
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    Text("HR arrow spans each block; the drop is 90s after it ends")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal)
+                }
+            }
 
             // Match details
             if !cm.matches.isEmpty {

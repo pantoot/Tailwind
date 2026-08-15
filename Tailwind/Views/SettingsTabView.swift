@@ -791,7 +791,11 @@ struct SettingsTabView: View {
             return
         }
 
-        let ridesToAnalyze = rideHistory.rides.filter { $0.creatineMetrics == nil }
+        // Never analyzed, or analyzed before normalized power / effort blocks
+        // existed — reanalysis is idempotent, so refreshing them is safe.
+        let ridesToAnalyze = rideHistory.rides.filter {
+            $0.creatineMetrics == nil || $0.creatineMetrics?.normalizedPower == nil
+        }
 
         // Phase 1: Quick scan — find which rides have power data (limit:1 query, cheap)
         await MainActor.run {

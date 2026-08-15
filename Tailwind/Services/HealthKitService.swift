@@ -365,19 +365,24 @@ class HealthKitService: ObservableObject {
     /// power and FTP are both available they give a stable, effort-accurate figure, so
     /// they win. Falls back to heart rate, then to nil when neither pair is available.
     ///
-    /// TSS = (seconds × IF²) / 36, where IF is power/FTP or HR/LTHR.
+    /// TSS = (seconds × IF²) / 36, where IF is power/FTP or HR/LTHR. Power IF
+    /// uses normalized power when the caller has it — average power flattens
+    /// interval rides and under-scores them by the square of the variability
+    /// index (a VI of 1.07 hides ~13% of the load).
     static func calculateTSS(
         duration: TimeInterval,
         averagePower: Double?,
+        normalizedPower: Double? = nil,
         averageHeartRate: Double?,
         profile: UserProfile
     ) -> Double? {
         guard duration > 0 else { return nil }
 
-        if let tss = powerTSS(duration: duration, averagePower: averagePower, profile: profile) {
-            let power = averagePower ?? 0
+        if let tss = powerTSS(duration: duration, averagePower: averagePower, normalizedPower: normalizedPower, profile: profile) {
+            let power = normalizedPower ?? averagePower ?? 0
+            let basis = normalizedPower != nil ? "NP" : "avg"
             let ftp = profile.ftp ?? 0
-            print("📊 Power TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", power))W / FTP \(ftp), IF=\(String(format: "%.2f", power / Double(ftp))))")
+            print("📊 Power TSS: \(String(format: "%.1f", tss)) (\(String(format: "%.0f", power))W \(basis) / FTP \(ftp), IF=\(String(format: "%.2f", power / Double(ftp))))")
             return tss
         }
 
@@ -392,10 +397,11 @@ class HealthKitService: ObservableObject {
         return nil
     }
 
-    /// TSS from power alone, or nil without both power and an FTP. Silent, so
-    /// bulk callers such as the data-quality audit don't flood the console.
-    static func powerTSS(duration: TimeInterval, averagePower: Double?, profile: UserProfile) -> Double? {
-        guard duration > 0, let power = averagePower, power > 0,
+    /// TSS from power alone, or nil without both power and an FTP. Prefers
+    /// normalized power over average when given. Silent, so bulk callers such
+    /// as the data-quality audit don't flood the console.
+    static func powerTSS(duration: TimeInterval, averagePower: Double?, normalizedPower: Double? = nil, profile: UserProfile) -> Double? {
+        guard duration > 0, let power = normalizedPower ?? averagePower, power > 0,
               let ftp = profile.ftp, ftp > 0 else { return nil }
         return stress(duration: duration, intensityFactor: power / Double(ftp))
     }
@@ -482,6 +488,7 @@ class HealthKitService: ObservableObject {
         let hrTSS = Self.calculateTSS(
             duration: duration,
             averagePower: creatineMetrics?.averagePower,
+            normalizedPower: creatineMetrics?.normalizedPower,
             averageHeartRate: heartRateData.average,
             profile: userProfile
         )
@@ -1505,6 +1512,7 @@ class HealthKitService: ObservableObject {
             let hrTSS = Self.calculateTSS(
                 duration: ride.duration,
                 averagePower: ride.averagePower ?? ride.creatineMetrics?.averagePower,
+                normalizedPower: ride.creatineMetrics?.normalizedPower,
                 averageHeartRate: avgHR,
                 profile: userProfile
             )

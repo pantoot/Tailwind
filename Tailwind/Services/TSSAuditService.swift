@@ -73,16 +73,31 @@ enum TSSAuditService {
                     averageHeartRate: ride.averageHeartRate,
                     profile: profile
                 )
-                let fromPower = HealthKitService.powerTSS(
+                // Average-power and normalized-power scores are both legitimate
+                // methodologies (avg predates NP scoring), so a stored value
+                // matching either one is reproducible.
+                let fromAveragePower = HealthKitService.powerTSS(
                     duration: ride.duration,
                     averagePower: ride.bestKnownAveragePower,
                     profile: profile
                 )
+                let fromNormalizedPower = HealthKitService.powerTSS(
+                    duration: ride.duration,
+                    averagePower: nil,
+                    normalizedPower: ride.creatineMetrics?.normalizedPower,
+                    profile: profile
+                )
+                let fromPower = fromNormalizedPower ?? fromAveragePower
 
                 // Nothing to check against — no thresholds set, or no signal recorded.
                 guard fromHR != nil || fromPower != nil else { return nil }
 
-                guard let defect = defect(for: ride, stored: stored, fromHR: fromHR, fromPower: fromPower) else {
+                guard let defect = defect(
+                    for: ride,
+                    stored: stored,
+                    fromHR: fromHR,
+                    powerScores: [fromNormalizedPower, fromAveragePower].compactMap { $0 }
+                ) else {
                     return nil
                 }
 
@@ -101,7 +116,7 @@ enum TSSAuditService {
         for ride: Ride,
         stored: Double,
         fromHR: Double?,
-        fromPower: Double?
+        powerScores: [Double]
     ) -> Defect? {
         // A zone-scored ride is judged on how much of itself it actually measured,
         // not on whether it agrees with a different formula.
@@ -110,14 +125,13 @@ enum TSSAuditService {
             guard coverage < minimumZoneCoverage else { return nil }
 
             // Only worth flagging if rescoring would meaningfully raise it.
-            guard let suggested = fromHR ?? fromPower,
+            guard let suggested = fromHR ?? powerScores.first,
                   suggested - stored > minimumAbsoluteDelta else { return nil }
 
             return .sparseHeartRateCoverage(coverage)
         }
 
-        let plausible = [fromHR, fromPower]
-            .compactMap { $0 }
+        let plausible = ([fromHR].compactMap { $0 } + powerScores)
             .contains { matches(stored: stored, expected: $0) }
         return plausible ? nil : .unreproducible
     }

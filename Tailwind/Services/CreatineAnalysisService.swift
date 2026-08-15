@@ -60,13 +60,43 @@ struct CreatineAnalysisService {
         // Average power (from raw, not smoothed)
         let avgPower = densePower.reduce(0, +) / Double(densePower.count)
 
+        // Normalized power weights surges the way the body pays for them, so
+        // interval rides score the load their structure actually imposed.
+        let np = normalizedPower(densePower)
+
+        let effortBlocks = EffortBlockService.detectBlocks(
+            densePower: densePower,
+            denseHR: denseHR,
+            ftp: userProfile.ftp,
+            offset: baseTime.timeIntervalSince(rideStart)
+        )
+
         return CreatineMetrics(
             max30sPower: max30s,
             matchCount: matches.count,
             matches: matches,
             hrRecoveryEvents: hrRecoveryEvents,
-            averagePower: avgPower
+            averagePower: avgPower,
+            normalizedPower: np,
+            effortBlocks: effortBlocks
         )
+    }
+
+    /// Coggan normalized power: 30s rolling average, then the fourth root of
+    /// the mean fourth power. Nil for rides shorter than one rolling window.
+    static func normalizedPower(_ densePower: [Double]) -> Double? {
+        let window = 30
+        guard densePower.count >= window else { return nil }
+
+        var rollingSum = densePower[0..<window].reduce(0, +)
+        var fourthPowerTotal = pow(rollingSum / Double(window), 4)
+        var rollingCount = 1
+        for i in window..<densePower.count {
+            rollingSum += densePower[i] - densePower[i - window]
+            fourthPowerTotal += pow(rollingSum / Double(window), 4)
+            rollingCount += 1
+        }
+        return pow(fourthPowerTotal / Double(rollingCount), 0.25)
     }
 
     // MARK: - Dense Array Builder
