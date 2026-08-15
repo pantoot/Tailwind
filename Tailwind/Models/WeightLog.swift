@@ -46,11 +46,26 @@ class WeightLogManager: ObservableObject {
         entries.insert(entry, at: 0)
         entries.sort { $0.date > $1.date }
         saveEntries()
+        syncProfileWeight()
     }
 
     func deleteEntry(_ entry: WeightEntry) {
         entries.removeAll { $0.id == entry.id }
         saveEntries()
+        syncProfileWeight()
+    }
+
+    /// The weight log is the single source of truth for weight; the profile copy
+    /// (which feeds the calorie formula) follows it. Without this, calories keep
+    /// using whatever was typed into Settings months ago.
+    private func syncProfileWeight() {
+        guard let latest = latestWeight() else { return }
+        var profile = UserProfile.load()
+        if abs(profile.weight - latest) > 0.01 {
+            profile.weight = latest
+            profile.save()
+            print("⚖️ Profile weight synced to latest log entry: \(String(format: "%.1f", latest)) lbs")
+        }
     }
 
     func latestWeight() -> Double? {
@@ -80,8 +95,10 @@ class WeightLogManager: ObservableObject {
         bodyFatSamples: [(date: Date, pct: Double)] = []
     ) -> Int {
         let calendar = Calendar.current
-        // Build a set of existing dates (day granularity) for fast lookup
-        let existingDays = Set(entries.map { calendar.startOfDay(for: $0.date) })
+        // Build a set of existing dates (day granularity) for fast lookup.
+        // Mutable: newly added samples claim their day too, so two same-day
+        // HealthKit samples (morning + evening weigh-in) can't both insert.
+        var existingDays = Set(entries.map { calendar.startOfDay(for: $0.date) })
 
         // Index lean mass and body fat by day for fast matching
         var leanByDay: [Date: Double] = [:]
@@ -135,12 +152,14 @@ class WeightLogManager: ObservableObject {
                 bodyFatPercentage: fatByDay[day]
             )
             entries.append(entry)
+            existingDays.insert(day)
             added += 1
         }
 
         if added > 0 || backfilled > 0 {
             entries.sort { $0.date > $1.date }
             saveEntries()
+            syncProfileWeight()
             if added > 0 { print("⚖️ Synced \(added) new weight entries from HealthKit") }
             if backfilled > 0 { print("⚖️ Backfilled composition on \(backfilled) existing entries") }
         }

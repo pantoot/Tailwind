@@ -71,6 +71,7 @@ class FITImportService: ObservableObject {
         case invalidFormat
         case parsingFailed(String)
         case noWorkoutData
+        case duplicateRide
 
         var errorDescription: String? {
             switch self {
@@ -82,6 +83,8 @@ class FITImportService: ObservableObject {
                 return "Failed to parse FIT file: \(reason)"
             case .noWorkoutData:
                 return "No workout data found in FIT file"
+            case .duplicateRide:
+                return "This ride has already been imported"
             }
         }
     }
@@ -123,6 +126,16 @@ class FITImportService: ObservableObject {
 
         // Convert to Ride model
         let ride = createRide(from: workoutData)
+
+        // Importing the same file twice (share-sheet retry, re-open) used to create
+        // two rides and write HealthKit twice. Checked before any side effects.
+        let isDuplicate = await MainActor.run {
+            rideHistory.hasOverlappingRide(start: ride.date, duration: ride.duration)
+        }
+        if isDuplicate {
+            print("⚠️ Skipping FIT import — overlapping ride already in log: \(ride.formattedDate)")
+            throw ImportError.duplicateRide
+        }
 
         // Save to HealthKit with detailed samples
         try await saveToHealthKit(workoutData: workoutData, ride: ride)

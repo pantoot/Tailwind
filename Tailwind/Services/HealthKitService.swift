@@ -970,44 +970,6 @@ class HealthKitService: ObservableObject {
         }
     }
 
-    // MARK: - FTP
-
-    /// Fetch the most recent FTP value from HealthKit (written by Peloton, Apple Watch, etc.)
-    func fetchFTP() async -> Double? {
-        let ftpType = HKQuantityType.quantityType(forIdentifier: .cyclingFunctionalThresholdPower)!
-
-        do {
-            let sample: HKQuantitySample? = try await withCheckedThrowingContinuation { continuation in
-                let query = HKSampleQuery(
-                    sampleType: ftpType,
-                    predicate: nil,
-                    limit: 1,
-                    sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)]
-                ) { _, results, error in
-                    if let error = error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: results?.first as? HKQuantitySample)
-                    }
-                }
-                healthStore.execute(query)
-            }
-
-            if let sample = sample {
-                let watts = sample.quantity.doubleValue(for: .watt())
-                let date = sample.startDate
-                print("⚡ Found FTP in HealthKit: \(Int(watts))W (from \(date))")
-                return watts
-            }
-
-            print("⚡ No FTP found in HealthKit")
-            return nil
-        } catch {
-            print("⚠️ Failed to fetch FTP: \(error.localizedDescription)")
-            return nil
-        }
-    }
-
     // MARK: - Body Mass (Weight)
 
     /// Fetch body mass samples from HealthKit (Withings scale, manual entries, etc.)

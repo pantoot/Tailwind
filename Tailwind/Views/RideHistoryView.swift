@@ -58,20 +58,6 @@ struct RideHistoryView: View {
                                 }
                             }
 
-                            NavigationLink(destination: PeakPerformanceView()) {
-                                HStack {
-                                    Image(systemName: "bolt.fill")
-                                        .foregroundColor(.orange)
-                                        .frame(width: 30)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Peak Performance")
-                                            .font(.headline)
-                                        Text("Best efforts and efficiency")
-                                            .font(.caption)
-                                            .foregroundColor(.gray)
-                                    }
-                                }
-                            }
                         }
 
                         // Summary stats

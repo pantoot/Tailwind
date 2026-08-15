@@ -116,6 +116,10 @@ struct TailwindApp: App {
 
                         // Clean up the temp file after import
                         try? FileManager.default.removeItem(at: fileURL)
+                    } catch FITImportService.ImportError.duplicateRide {
+                        // Terminal, not retryable — re-queueing would alert forever.
+                        print("⚠️ Duplicate FIT import ignored: \(filePath)")
+                        try? FileManager.default.removeItem(at: fileURL)
                     } catch {
                         print("❌ Failed to import from URL: \(error)")
                         // The file was dequeued before parsing to prevent a
@@ -240,6 +244,11 @@ struct TailwindApp: App {
                     // Clean up after successful import
                     try? FileManager.default.removeItem(at: url)
                     print("✅ Processed pending import: \(ride.formattedDate), \(ride.formattedDistance)")
+                } catch FITImportService.ImportError.duplicateRide {
+                    // Terminal, not retryable — dequeue so it doesn't alert forever.
+                    print("⚠️ Duplicate pending import ignored: \(path)")
+                    await MainActor.run { clearPendingImport(path: path) }
+                    try? FileManager.default.removeItem(at: url)
                 } catch {
                     print("❌ Failed pending import (kept in queue for retry): \(error)")
                     failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
@@ -303,140 +312,3 @@ class AppServices: ObservableObject {
     }
 }
 
-// MARK: - Legacy AppServices (preserved for reference)
-// The original ride-tracking services are preserved below for potential future use
-// or if we want to add a hybrid mode that supports both import and live tracking.
-
-/*
-class LegacyAppServices: ObservableObject {
-    let bluetoothService: BluetoothService
-    let sensorDataService: SensorDataService
-    let gpsService: GPSService
-    let rideHistory: RideHistory
-    let bikeStable: BikeStable
-    let trainingLoadManager: TrainingLoadManager
-    let healthKitService: HealthKitService
-    let backgroundAudioService: BackgroundAudioService
-    let routeMatchingService: RouteMatchingService
-    let segmentManager: SegmentManager
-    let audioCueService: AudioCueService
-    let phoneConnectivity: PhoneConnectivityManager
-
-    init() {
-        // Initialize all services first
-        self.bluetoothService = BluetoothService()
-        self.sensorDataService = SensorDataService()
-        self.gpsService = GPSService()
-        self.rideHistory = RideHistory()
-        self.bikeStable = BikeStable()
-        self.trainingLoadManager = TrainingLoadManager()
-        self.healthKitService = HealthKitService()
-        self.backgroundAudioService = BackgroundAudioService()
-        self.routeMatchingService = RouteMatchingService()
-        self.segmentManager = SegmentManager()
-        self.audioCueService = AudioCueService()
-        self.phoneConnectivity = PhoneConnectivityManager()
-
-        // Wire up callbacks after all services are created
-        // Bluetooth -> Sensor Data
-        self.bluetoothService.onSpeedUpdate = { [weak sensorDataService] speed in
-            sensorDataService?.updateSpeed(speed, fromSensor: true)
-        }
-
-        self.bluetoothService.onCadenceUpdate = { [weak sensorDataService] cadence in
-            sensorDataService?.updateCadence(cadence)
-        }
-
-        self.bluetoothService.onHeartRateUpdate = { [weak sensorDataService] heartRate in
-            sensorDataService?.updateHeartRate(heartRate)
-        }
-
-        // GPS -> Sensor Data (backup speed)
-        self.gpsService.onSpeedUpdate = { [weak sensorDataService, weak bluetoothService] gpsSpeed in
-            // Only use GPS speed if we don't have a connected speed sensor
-            guard let sensorData = sensorDataService,
-                  let bluetooth = bluetoothService else { return }
-
-            // Check if we have an active speed sensor (not just if speed is 0)
-            let hasSpeedSensor = bluetooth.isConnected(.speed)
-
-            if !hasSpeedSensor {
-                sensorData.updateSpeed(gpsSpeed)
-            }
-        }
-
-        // GPS -> Route Matching (track coordinates for route detection)
-        self.gpsService.onLocationUpdate = { [weak routeMatchingService, weak segmentManager] location in
-            routeMatchingService?.addCoordinate(location.coordinate)
-
-            // Segment detection
-            segmentManager?.checkForSegmentStart(location.coordinate)
-            segmentManager?.checkForSegmentEnd(location.coordinate)
-            segmentManager?.updateActiveEffort(coordinate: location.coordinate)
-        }
-
-        // Bike Selection -> Auto-connect sensors
-        self.bikeStable.onBikeChanged = { [weak bluetoothService, weak bikeStable] bike in
-            guard let bluetoothService = bluetoothService,
-                  let bikeStable = bikeStable else { return }
-
-            print("🚴 Bike changed to: \(bike.name)")
-            bluetoothService.disconnectBikeSensors()
-
-            for (_, sensor) in bikeStable.profileSensors {
-                bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
-            }
-
-            for (_, sensor) in bike.assignedSensors {
-                bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
-            }
-        }
-
-        // Auto-connect sensors for initially selected bike
-        if let initialBike = bikeStable.selectedBike {
-            for (_, sensor) in bikeStable.profileSensors {
-                bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
-            }
-
-            for (_, sensor) in initialBike.assignedSensors {
-                bluetoothService.connectToPeripheral(withId: sensor.id, type: sensor.type)
-            }
-        }
-
-        // Watch Connectivity
-        phoneConnectivity.activateSession()
-
-        phoneConnectivity.onStartRide = { [weak phoneConnectivity] in
-            print("📱 iPhone: Watch requested start ride")
-            DispatchQueue.main.async {
-                phoneConnectivity?.watchRequestsStartRide.toggle()
-            }
-        }
-
-        phoneConnectivity.onStopRide = { [weak phoneConnectivity] in
-            print("📱 iPhone: Watch requested stop ride")
-            DispatchQueue.main.async {
-                phoneConnectivity?.watchRequestsStopRide.toggle()
-            }
-        }
-
-        phoneConnectivity.onToggleAudio = { [weak audioCueService] in
-            audioCueService?.audioEnabled.toggle()
-        }
-
-        setupWatchHeartRate()
-    }
-
-    func setupWatchHeartRate() {
-        phoneConnectivity.$watchHeartRate
-            .sink { [weak sensorDataService] watchHR in
-                if watchHR > 0 {
-                    sensorDataService?.updateWatchHeartRate(watchHR)
-                }
-            }
-            .store(in: &cancellables)
-    }
-
-    private var cancellables = Set<AnyCancellable>()
-}
-*/

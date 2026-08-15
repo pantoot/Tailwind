@@ -467,6 +467,42 @@ class RideHistory: ObservableObject {
         persistRides()
     }
 
+    /// Import-time duplicate check: is a workout spanning `start`+`duration`
+    /// already represented in the log? This is the canonical overlap test — all
+    /// import paths should use it rather than growing their own variant.
+    ///
+    /// Two rules: >50% time overlap measured against the LONGER workout (using the
+    /// shorter one meant a cool-down sitting inside a real ride overlapped 100% of
+    /// itself and discarded the 60-minute ride), or near-identical start (<10 min)
+    /// with similar duration (ratio >0.7) for the same ride reported by two sources.
+    func hasOverlappingRide(start: Date, duration: TimeInterval) -> Bool {
+        rides.contains { existing in
+            let existingStart = existing.date
+            let existingEnd = existingStart.addingTimeInterval(existing.duration)
+            let newEnd = start.addingTimeInterval(duration)
+
+            let overlapStart = max(existingStart, start)
+            let overlapEnd = min(existingEnd, newEnd)
+            if overlapStart < overlapEnd {
+                let overlapDuration = overlapEnd.timeIntervalSince(overlapStart)
+                let longerDuration = max(existing.duration, duration)
+                if longerDuration > 0, overlapDuration / longerDuration > 0.5 {
+                    return true
+                }
+            }
+
+            let startDiff = abs(existingStart.timeIntervalSince(start))
+            if startDiff < 600, max(existing.duration, duration) > 0 {
+                let durationRatio = min(existing.duration, duration) / max(existing.duration, duration)
+                if durationRatio > 0.7 {
+                    return true
+                }
+            }
+
+            return false
+        }
+    }
+
     /// Two rides are the same ride when they start within this window of each other.
     /// HealthKit hands back the same workout from several sources with slightly
     /// different start times.
@@ -673,11 +709,6 @@ class RideHistory: ObservableObject {
             print("ℹ️  No rides found for \(dateString)")
             return "No rides found for \(dateString)"
         }
-    }
-
-    // Convenience method for fixing today's calories
-    func fixTodaysCalories(userProfile: UserProfile, healthKitService: HealthKitService? = nil) async -> String {
-        return await fixCalories(for: nil, userProfile: userProfile, healthKitService: healthKitService)
     }
 
     /// Files a freshly imported ride's track away, if it carries one.

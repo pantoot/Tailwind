@@ -4,7 +4,6 @@ struct UserProfile: Codable {
     var birthday: Date
     var weight: Double // in lbs
     var gender: Gender
-    var heightInches: Int? // Optional for BMI calculations later
     var lactateThresholdHR: Int? // LTHR for zone calculations
     var maxHeartRate: Int? // Max HR (optional - can be estimated)
     var ftp: Int? // Functional Threshold Power in watts
@@ -42,7 +41,7 @@ struct UserProfile: Codable {
     static var `default`: UserProfile {
         let calendar = Calendar.current
         let thirtyYearsAgo = calendar.date(byAdding: .year, value: -30, to: Date()) ?? Date()
-        return UserProfile(birthday: thirtyYearsAgo, weight: 170, gender: .male, heightInches: 70)
+        return UserProfile(birthday: thirtyYearsAgo, weight: 170, gender: .male)
     }
 
     // Calculate calories burned using heart rate formula (Keytel et al.)

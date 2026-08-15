@@ -352,9 +352,10 @@ struct RidesTabView: View {
             var errors = 0
 
             for workout in workouts {
-                let isDuplicate = rideHistory.rides.contains { ride in
-                    ridesOverlap(existingRide: ride, newWorkout: workout)
-                }
+                let isDuplicate = rideHistory.hasOverlappingRide(
+                    start: workout.startDate,
+                    duration: workout.duration
+                )
 
                 if isDuplicate {
                     skipped += 1
@@ -510,38 +511,4 @@ struct RidesTabView: View {
         }
     }
 
-    private func ridesOverlap(existingRide: Ride, newWorkout: HKWorkout) -> Bool {
-        let existingStart = existingRide.date
-        let existingEnd = existingStart.addingTimeInterval(existingRide.duration)
-
-        let newStart = newWorkout.startDate
-        let newEnd = newWorkout.endDate
-
-        let overlapStart = max(existingStart, newStart)
-        let overlapEnd = min(existingEnd, newEnd)
-
-        if overlapStart < overlapEnd {
-            let overlapDuration = overlapEnd.timeIntervalSince(overlapStart)
-
-            // Compare against the LONGER workout. Using the shorter one meant a brief
-            // cool-down sitting inside a real ride overlapped 100% of itself, so the
-            // 60-minute ride got discarded as a "duplicate" of a 5-minute cool-down.
-            let longerDuration = max(existingRide.duration, newWorkout.duration)
-
-            if longerDuration > 0, overlapDuration / longerDuration > 0.5 {
-                return true
-            }
-        }
-
-        let startDiff = abs(existingStart.timeIntervalSince(newStart))
-        if startDiff < 600 {
-            let durationRatio = min(existingRide.duration, newWorkout.duration) /
-                               max(existingRide.duration, newWorkout.duration)
-            if durationRatio > 0.7 {
-                return true
-            }
-        }
-
-        return false
-    }
 }

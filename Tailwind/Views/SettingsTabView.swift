@@ -134,30 +134,15 @@ struct SettingsTabView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Button(action: {
-                        Task {
-                            try? await healthKitService.requestAuthorization()
-                            if let ftp = await healthKitService.fetchFTP() {
-                                ftpWatts = String(Int(ftp))
-                            }
-                        }
-                    }) {
+                    // Shown only until a real max HR is entered — with one set, the
+                    // age formula is just clutter next to a better number.
+                    if Int(maxHeartRate) == nil {
                         HStack {
-                            Label("Fetch FTP from Apple Health", systemImage: "heart.fill")
-                                .foregroundStyle(.primary)
+                            Text("Estimated Max HR")
                             Spacer()
-                            if let ftp = Int(ftpWatts), ftp > 0 {
-                                Text("\(ftp)W")
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("\(220 - calculatedAge) bpm")
+                                .foregroundStyle(.secondary)
                         }
-                    }
-
-                    HStack {
-                        Text("Estimated Max HR")
-                        Spacer()
-                        Text("\(220 - calculatedAge) bpm")
-                            .foregroundStyle(.secondary)
                     }
 
                     Button(action: {
@@ -210,14 +195,8 @@ struct SettingsTabView: View {
                             Text("Z6: \(Int(Double(ftp) * 1.2))W")
                                 .foregroundStyle(.secondary)
                         } else {
-                            TextField("Watts", value: $creatineSettingsManager.settings.matchThresholdWatts, format: .number)
-                                .keyboardType(.numberPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(width: 60)
-                                .onChange(of: creatineSettingsManager.settings.matchThresholdWatts) { _, _ in
-                                    creatineSettingsManager.save()
-                                }
-                            Text("W")
+                            Text("Set FTP to enable match detection")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -518,7 +497,6 @@ struct SettingsTabView: View {
             birthday: birthday,
             weight: weight,
             gender: gender,
-            heightInches: nil,
             lactateThresholdHR: Int(lactateThresholdHR),
             maxHeartRate: Int(maxHeartRate),
             ftp: Int(ftpWatts)
