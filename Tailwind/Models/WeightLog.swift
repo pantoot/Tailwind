@@ -167,16 +167,20 @@ class WeightLogManager: ObservableObject {
     }
 
     private func loadEntries() {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode([WeightEntry].self, from: data) else {
-            return
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
+        do {
+            entries = try JSONDecoder().decode([WeightEntry].self, from: data)
+        } catch {
+            print("❌ ERROR: Weight log decode failed: \(error)")
         }
-        entries = decoded
     }
 
     private func saveEntries() {
-        if let encoded = try? JSONEncoder().encode(entries) {
+        do {
+            let encoded = try JSONEncoder().encode(entries)
             UserDefaults.standard.set(encoded, forKey: storageKey)
+        } catch {
+            print("❌ ERROR: Weight log save failed: \(error)")
         }
     }
 }

@@ -329,11 +329,14 @@ class TrainingLoadManager: ObservableObject {
     }
 
     private func loadData() {
-        guard let data = UserDefaults.standard.data(forKey: loadsKey),
-              let decoded = try? JSONDecoder().decode([DailyTrainingLoad].self, from: data) else {
-            return
+        guard let data = UserDefaults.standard.data(forKey: loadsKey) else { return }
+        do {
+            dailyLoads = try JSONDecoder().decode([DailyTrainingLoad].self, from: data)
+        } catch {
+            // Recoverable via syncFromRides at launch, but leave a trail so a
+            // session of zeroed CTL/ATL is diagnosable.
+            print("❌ ERROR: Failed to decode training loads (will rebuild from rides): \(error)")
         }
-        dailyLoads = decoded
     }
 
     // Clear all training load data (for re-import)
@@ -344,8 +347,11 @@ class TrainingLoadManager: ObservableObject {
     }
 
     private func saveData() {
-        if let encoded = try? JSONEncoder().encode(dailyLoads) {
+        do {
+            let encoded = try JSONEncoder().encode(dailyLoads)
             UserDefaults.standard.set(encoded, forKey: loadsKey)
+        } catch {
+            print("❌ ERROR: Failed to save training loads: \(error)")
         }
     }
 }

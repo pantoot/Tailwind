@@ -76,11 +76,14 @@ class HealthKitService: ObservableObject {
         let startDate = ride.date
         let endDate = ride.date.addingTimeInterval(ride.duration)
 
+        // Indoor rides (Peloton) must not be re-stamped outdoor on a rewrite
+        let isOutdoor = ride.hasRouteData
+
         if #available(iOS 17.0, *) {
             // Use modern HKWorkoutBuilder API
             let configuration = HKWorkoutConfiguration()
             configuration.activityType = .cycling
-            configuration.locationType = .outdoor
+            configuration.locationType = isOutdoor ? .outdoor : .indoor
 
             let builder = HKWorkoutBuilder(healthStore: healthStore, configuration: configuration, device: .local())
 
@@ -111,7 +114,7 @@ class HealthKitService: ObservableObject {
 
             // Add metadata
             try await builder.addMetadata([
-                HKMetadataKeyIndoorWorkout: false,
+                HKMetadataKeyIndoorWorkout: !isOutdoor,
                 "Tailwind": true,
                 "AverageSpeed": ride.averageSpeed,
                 "MaxSpeed": ride.maxSpeed,
@@ -134,7 +137,7 @@ class HealthKitService: ObservableObject {
                 totalEnergyBurned: HKQuantity(unit: .kilocalorie(), doubleValue: ride.calories),
                 totalDistance: HKQuantity(unit: .mile(), doubleValue: ride.distance),
                 metadata: [
-                    HKMetadataKeyIndoorWorkout: false,
+                    HKMetadataKeyIndoorWorkout: !isOutdoor,
                     "Tailwind": true,
                     "AverageSpeed": ride.averageSpeed,
                     "MaxSpeed": ride.maxSpeed,
@@ -488,6 +491,9 @@ class HealthKitService: ObservableObject {
         // Create a Tailwind workout with Active Energy for Move ring credit
         // Third-party apps like Peloton often write calories only as workout metadata,
         // which Apple's Move ring ignores. Creating a proper workout fixes this.
+        // Its own do/catch: this write is cosmetic — a transient HealthKit failure
+        // here must not throw away the fully-built ride above.
+        do {
         if writeActiveEnergy && calories > 0 {
             let configuration = HKWorkoutConfiguration()
             configuration.activityType = .cycling
@@ -530,6 +536,9 @@ class HealthKitService: ObservableObject {
             _ = try await builder.finishWorkout()
 
             print("🔥 Created workout for Move ring: \(Int(calories)) kcal")
+        }
+        } catch {
+            print("⚠️ Move-ring workout write failed (ride import unaffected): \(error.localizedDescription)")
         }
 
         print("✅ Imported workout: \(distance) mi, \(duration)s, \(heartRateData.average) bpm avg, \(Int(calories)) kcal")
@@ -1178,6 +1187,7 @@ class HealthKitService: ObservableObject {
                     healthStore.execute(query)
                 }
             } catch {
+                print("⚠️ LTHR scan: HR fetch failed for workout \(workout.startDate): \(error.localizedDescription)")
                 continue
             }
 
@@ -1298,6 +1308,9 @@ class HealthKitService: ObservableObject {
             }
             return count > 0
         } catch {
+            // Indistinguishable from "no power" to the caller, so at least leave a
+            // trail — a systematic failure here silently skips reanalysis backfill.
+            print("⚠️ hasPowerData check failed for \(ride.formattedDate): \(error.localizedDescription)")
             return false
         }
     }

@@ -22,16 +22,23 @@ struct CreatineSettings: Codable {
     private static let storageKey = "CreatineSettings"
 
     static func load() -> CreatineSettings {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let settings = try? JSONDecoder().decode(CreatineSettings.self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else {
             return CreatineSettings()
         }
-        return settings
+        do {
+            return try JSONDecoder().decode(CreatineSettings.self, from: data)
+        } catch {
+            print("❌ ERROR: CreatineSettings decode failed, using defaults: \(error)")
+            return CreatineSettings()
+        }
     }
 
     func save() {
-        if let data = try? JSONEncoder().encode(self) {
+        do {
+            let data = try JSONEncoder().encode(self)
             UserDefaults.standard.set(data, forKey: CreatineSettings.storageKey)
+        } catch {
+            print("❌ ERROR: CreatineSettings save failed: \(error)")
         }
     }
 }

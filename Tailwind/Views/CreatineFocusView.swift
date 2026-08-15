@@ -547,8 +547,21 @@ struct WeightQuickEntry: View {
         isSyncing = true
         syncMessage = nil
 
-        // Re-request auth to prompt for any new types (lean body mass, body fat)
-        try? await healthKitService.requestAuthorization()
+        // Re-request auth to prompt for any new types (lean body mass, body fat).
+        // An auth failure must not fall through to the fetches — they'd return []
+        // and the user would see "No weight data" for what is a permission problem.
+        do {
+            try await healthKitService.requestAuthorization()
+        } catch {
+            print("❌ HealthKit authorization failed during weight sync: \(error.localizedDescription)")
+            await MainActor.run {
+                syncMessage = "Couldn't access Apple Health — check permissions in Settings"
+                isSyncing = false
+            }
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run { syncMessage = nil }
+            return
+        }
 
         async let weightTask = healthKitService.fetchWeightSamples(days: 365)
         async let leanTask = healthKitService.fetchLeanBodyMassSamples(days: 365)
