@@ -563,9 +563,16 @@ class RideHistory: ObservableObject {
             // Check if ride is from target date
             guard calendar.isDate(ride.date, inSameDayAs: targetDate) else { continue }
 
+            // A Keytel estimate is meaningless without a real heart rate — skip
+            // rather than fabricate one.
+            guard ride.averageHeartRate > 0 else {
+                diagnosticInfo += "Ride: \(ride.formattedDate) — skipped (no HR data to estimate calories from)\n\n"
+                continue
+            }
+
             // Recalculate calories
             let durationMinutes = ride.duration / 60.0
-            let hrForCalc = ride.averageHeartRate > 0 ? ride.averageHeartRate : 135.0
+            let hrForCalc = ride.averageHeartRate
             let correctedCalories = userProfile.calculateCalories(
                 averageHeartRate: hrForCalc,
                 durationMinutes: durationMinutes

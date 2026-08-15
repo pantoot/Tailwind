@@ -1225,33 +1225,42 @@ class HealthKitService: ObservableObject {
             let bpmValues = hrSamples.map { $0.quantity.doubleValue(for: bpmUnit) }
             let timestamps = hrSamples.map { $0.startDate }
 
-            // Compute the best 20-minute rolling average
-            // Use sample-based window (not time-based) since HR samples are ~1/sec from Peloton
-            // but may be sparser from Apple Watch (~every 5s)
+            // Compute the best 20-minute rolling average, TIME-weighted. Sources mix
+            // sampling rates (Peloton ~1 Hz, Watch ~0.2 Hz); a plain sample-count
+            // average lets the densely-sampled stretch dominate and can inflate the
+            // estimate by 10+ bpm. Each sample is weighted by the seconds it covers
+            // (capped so one sample before a gap can't stand in for the whole gap).
             let windowSeconds = 1200.0 // 20 minutes
+            let maxSampleWeight = 10.0
             var best20Min = 0.0
 
-            // Sliding window using timestamps for accuracy
+            var weights = [Double](repeating: 1.0, count: hrSamples.count)
+            for i in 0..<(hrSamples.count - 1) {
+                weights[i] = min(max(timestamps[i + 1].timeIntervalSince(timestamps[i]), 0), maxSampleWeight)
+            }
+
             var windowStart = 0
-            var windowSum = 0.0
-            var windowCount = 0
+            var weightedSum = 0.0   // Σ bpm·seconds
+            var weightTotal = 0.0   // Σ seconds actually covered
 
             for end in 0..<hrSamples.count {
-                windowSum += bpmValues[end]
-                windowCount += 1
+                weightedSum += bpmValues[end] * weights[end]
+                weightTotal += weights[end]
 
                 // Shrink window from left until it fits within 20 minutes
                 while windowStart < end &&
                       timestamps[end].timeIntervalSince(timestamps[windowStart]) > windowSeconds {
-                    windowSum -= bpmValues[windowStart]
-                    windowCount -= 1
+                    weightedSum -= bpmValues[windowStart] * weights[windowStart]
+                    weightTotal -= weights[windowStart]
                     windowStart += 1
                 }
 
-                // Only consider if window spans at least 18 minutes (allow small gaps)
+                // Require a genuine full-length window (small tolerance for discrete
+                // sample spacing) with ≥90% of it covered by real samples — an
+                // 18-minute window admits higher averages than a true 20.
                 let windowDuration = timestamps[end].timeIntervalSince(timestamps[windowStart])
-                if windowDuration >= 1080 && windowCount >= 10 {
-                    let avg = windowSum / Double(windowCount)
+                if windowDuration >= windowSeconds - 15, weightTotal >= windowSeconds * 0.9 {
+                    let avg = weightedSum / weightTotal
                     if avg > best20Min {
                         best20Min = avg
                     }

@@ -20,9 +20,13 @@ struct CreatineAnalysisService {
         guard duration > 0 else { return nil }
 
         let baseTime = power.first!.date
-        let densePower = buildDenseArray(from: power.map { (date: $0.date, value: $0.watts) }, baseTime: baseTime, count: duration)
+        // Power and speed zero-fill across recording gaps: an auto-paused head unit
+        // writes no records, and interpolating a coffee stop scores it as steady
+        // wattage — Coggan convention is stopped time = 0W. HR still interpolates;
+        // zero bpm would be worse than a drawn-through estimate.
+        let densePower = buildDenseArray(from: power.map { (date: $0.date, value: $0.watts) }, baseTime: baseTime, count: duration, zeroFillGapsLongerThan: recordingGapSeconds)
         let denseHR = buildDenseArray(from: heartRate.map { (date: $0.date, value: $0.bpm) }, baseTime: baseTime, count: duration)
-        let denseSpeed = buildDenseArray(from: speed.map { (date: $0.date, value: $0.metersPerSecond) }, baseTime: baseTime, count: duration)
+        let denseSpeed = buildDenseArray(from: speed.map { (date: $0.date, value: $0.metersPerSecond) }, baseTime: baseTime, count: duration, zeroFillGapsLongerThan: recordingGapSeconds)
 
         // 3-second smoothed power
         let smoothedPower = smooth3s(densePower)
@@ -101,12 +105,19 @@ struct CreatineAnalysisService {
 
     // MARK: - Dense Array Builder
 
+    /// Gaps longer than this are treated as the head unit auto-pausing (no records
+    /// written) rather than a brief sensor dropout worth interpolating across.
+    private static let recordingGapSeconds = 10
+
     /// Interpolates sparse timestamped samples into a dense 1-second array.
     /// Fills gaps with linear interpolation, handles Magene connection drops.
+    /// Gaps longer than `zeroFillGapsLongerThan` seconds are left at zero instead
+    /// (pass nil to always interpolate).
     private static func buildDenseArray(
         from samples: [(date: Date, value: Double)],
         baseTime: Date,
-        count: Int
+        count: Int,
+        zeroFillGapsLongerThan: Int? = nil
     ) -> [Double] {
         var result = [Double](repeating: 0, count: count)
         guard !samples.isEmpty else { return result }
@@ -135,6 +146,9 @@ struct CreatineAnalysisService {
             let to = knownIndices[i + 1]
             let gap = to.index - from.index
             if gap <= 1 { continue }
+            if let maxGap = zeroFillGapsLongerThan, gap > maxGap {
+                continue // recording pause — leave the gap at 0
+            }
             for j in (from.index + 1)..<to.index {
                 let t = Double(j - from.index) / Double(gap)
                 result[j] = from.value + t * (to.value - from.value)

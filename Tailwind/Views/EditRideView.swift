@@ -38,19 +38,15 @@ struct EditRideView: View {
         // every unrelated edit.
         guard hrChanged else { return ride.hrTSS }
 
-        let profile = UserProfile.load()
-        let dur = ride.duration
-        guard dur > 0 else { return nil }
-
-        // HR-based TSS
-        if let hr = Double(avgHeartRate), hr > 0,
-           let lthr = profile.lactateThresholdHR, lthr > 0 {
-            let hrIntensity = hr / Double(lthr)
-            let hours = dur / 3600
-            return hours * hrIntensity * hrIntensity * 100
-        }
-
-        return ride.hrTSS
+        // The shared calculator prefers power, so a power-scored ride keeps its
+        // score even when the HR field is corrected.
+        return HealthKitService.calculateTSS(
+            duration: ride.duration,
+            averagePower: ride.bestKnownAveragePower,
+            normalizedPower: ride.creatineMetrics?.normalizedPower,
+            averageHeartRate: Double(avgHeartRate),
+            profile: UserProfile.load()
+        ) ?? ride.hrTSS
     }
 
     var body: some View {

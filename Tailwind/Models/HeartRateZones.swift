@@ -57,6 +57,11 @@ struct HeartRateZones: Codable {
 
         /// Where the zone starts, as a fraction of LTHR.
         ///
+        /// These are Joe Friel's LTHR zone floors, chosen deliberately — NOT the
+        /// Coggan levels (which put Z2 at 69% and Z5 at 106%). Friel's tighter
+        /// bands suit HR-based scoring for steady riding; anything comparing these
+        /// zones to Coggan-labeled sources should expect the offset.
+        ///
         /// Zones are defined by their floor alone. The textbook table quotes closed
         /// bands (Z2 = 81–89%, Z3 = 90–93%), but truncating *both* edges to whole
         /// beats leaves beats that no band claims — at LTHR 150 nothing owned 134,

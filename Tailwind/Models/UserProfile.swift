@@ -57,8 +57,9 @@ struct UserProfile: Codable {
             return max(0, calories)
 
         case .female:
-            // Women: Calories/min = (-20.4022 + (0.4472 × HR) + (0.1263 × Weight_kg) + (0.074 × Age)) / 4.184
-            let caloriesPerMinute = ((-20.4022) + (0.4472 * averageHeartRate) + (0.1263 * weightKg) + (0.074 * Double(age))) / 4.184
+            // Women: Calories/min = (-20.4022 + (0.4472 × HR) − (0.1263 × Weight_kg) + (0.074 × Age)) / 4.184
+            // Keytel et al. 2005: the weight coefficient is NEGATIVE for women.
+            let caloriesPerMinute = ((-20.4022) + (0.4472 * averageHeartRate) - (0.1263 * weightKg) + (0.074 * Double(age))) / 4.184
             let calories = caloriesPerMinute * durationMinutes
             return max(0, calories)
         }

@@ -114,7 +114,9 @@ class TrainingLoadManager: ObservableObject {
     @Published var dailyLoads: [DailyTrainingLoad] = []
 
     private let loadsKey = "DailyTrainingLoads"
-    private let maxDays = 180  // Keep 6 months of history
+    // Retention must cover the CTL warm-up walk (5 × 42 = 210 days), or the
+    // oldest real TSS silently reads as zero and understates fitness.
+    private let maxDays = 220
 
     init() {
         loadData()
@@ -200,7 +202,8 @@ class TrainingLoadManager: ObservableObject {
 
     // Calculate metrics as of a specific date
     func calculateMetrics(asOf date: Date) -> PerformanceMetrics {
-        let normalizedDate = Calendar.current.startOfDay(for: date)
+        let calendar = Calendar.current
+        let normalizedDate = calendar.startOfDay(for: date)
 
         // Get all loads up to and including this date
         let relevantLoads = dailyLoads.filter { $0.date <= normalizedDate }
@@ -211,8 +214,12 @@ class TrainingLoadManager: ObservableObject {
         // Calculate ATL (7-day exponential weighted average)
         let atl = calculateExponentialAverage(loads: relevantLoads, days: 7, asOf: normalizedDate)
 
-        // Calculate TSB (Training Stress Balance / Form)
-        let tsb = ctl - atl
+        // TSB (Form) is what you woke up with: yesterday's CTL minus yesterday's
+        // ATL (TrainingPeaks convention). Using today's values would move today's
+        // ride into today's form and shift the whole form chart a day early.
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: normalizedDate) ?? normalizedDate
+        let tsb = calculateExponentialAverage(loads: relevantLoads, days: 42, asOf: yesterday)
+                - calculateExponentialAverage(loads: relevantLoads, days: 7, asOf: yesterday)
 
         return PerformanceMetrics(ctl: ctl, atl: atl, tsb: tsb)
     }
@@ -222,11 +229,17 @@ class TrainingLoadManager: ObservableObject {
         guard !loads.isEmpty else { return 0 }
 
         let calendar = Calendar.current
-        let exponentialConstant = 2.0 / Double(days + 1)
+        // TrainingPeaks/Coggan impulse-response constant: k = 1/N, i.e.
+        // CTL_today = CTL_yesterday + (TSS_today − CTL_yesterday) / 42.
+        // (Not the finance EMA 2/(N+1) — that made a "42-day" CTL behave
+        // like a 21-day one and doubled every ramp-rate reading.)
+        let exponentialConstant = 1.0 / Double(days)
         var average: Double = 0
 
-        // Start from oldest date in our window and work forward
-        let startDate = calendar.date(byAdding: .day, value: -days * 3, to: date) ?? date
+        // Start from oldest date in our window and work forward. With k = 1/N a
+        // zero-seeded walk needs ~5 time constants for the residual bias to drop
+        // below 1% ((41/42)^210 ≈ 0.6%).
+        let startDate = calendar.date(byAdding: .day, value: -days * 5, to: date) ?? date
 
         // Build daily TSS map
         var tssMap: [String: Double] = [:]
@@ -241,7 +254,6 @@ class TrainingLoadManager: ObservableObject {
             let todayTSS = tssMap[dateKey] ?? 0
 
             // EMA formula: EMA = (Today's TSS * k) + (Yesterday's EMA * (1 - k))
-            // where k = 2 / (days + 1)
             average = (todayTSS * exponentialConstant) + (average * (1 - exponentialConstant))
 
             currentDate = calendar.date(byAdding: .day, value: 1, to: currentDate) ?? date
@@ -303,17 +315,15 @@ class TrainingLoadManager: ObservableObject {
         let currentDayTSS = dailyLoads.first(where: { $0.dateKey == todayKey })?.tss ?? 0
         let totalDayTSS = currentDayTSS + tss
 
-        // Calculate what metrics would be tomorrow
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today) ?? today
-
         // Temporarily add the workout
         let tempLoad = DailyTrainingLoad(date: today, tss: totalDayTSS)
         var tempLoads = dailyLoads.filter { $0.dateKey != todayKey }
         tempLoads.append(tempLoad)
 
-        // Calculate metrics for tomorrow with this workout included
-        let ctl = calculateExponentialAverage(loads: tempLoads, days: 42, asOf: tomorrow)
-        let atl = calculateExponentialAverage(loads: tempLoads, days: 7, asOf: tomorrow)
+        // Tomorrow's form = today's CTL − today's ATL with the workout included
+        // (form is measured off the previous day's values).
+        let ctl = calculateExponentialAverage(loads: tempLoads, days: 42, asOf: today)
+        let atl = calculateExponentialAverage(loads: tempLoads, days: 7, asOf: today)
 
         return ctl - atl
     }

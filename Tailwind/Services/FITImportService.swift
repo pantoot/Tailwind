@@ -340,8 +340,19 @@ class FITImportService: ObservableObject {
         let routeCoordinates: [Ride.Coordinate]? = data.coordinates.isEmpty ? nil :
             data.coordinates.map { Ride.Coordinate(from: $0.coordinate) }
 
-        // Calculate time in zones and hrTSS from HR samples
-        let (timeInZone, hrTSS) = calculateTimeInZones(from: data.heartRateSamples)
+        // Calculate time in zones and zone-weighted hrTSS from HR samples
+        let (timeInZone, zoneTSS) = calculateTimeInZones(from: data.heartRateSamples)
+
+        // Score TSS through the shared calculator so FIT imports use the same
+        // NP-first methodology as HealthKit imports; the zone-weighted score is
+        // the fallback when neither power+FTP nor HR+LTHR can score the ride.
+        let tss = HealthKitService.calculateTSS(
+            duration: data.duration,
+            averagePower: data.averagePower > 0 ? data.averagePower : nil,
+            normalizedPower: data.creatineMetrics?.normalizedPower,
+            averageHeartRate: data.averageHeartRate > 0 ? data.averageHeartRate : nil,
+            profile: UserProfile.load()
+        ) ?? zoneTSS
 
         return Ride(
             id: UUID(),
@@ -353,6 +364,8 @@ class FITImportService: ObservableObject {
             averageHeartRate: data.averageHeartRate,
             maxHeartRate: data.maxHeartRate,
             calories: data.calories,
+            averagePower: data.averagePower > 0 ? data.averagePower : nil,
+            averageCadence: data.averageCadence > 0 ? data.averageCadence : nil,
             elevationGain: data.elevationGainFeet,
             averageTemperatureCelsius: data.averageTemperature,
             routeCoordinates: routeCoordinates,
@@ -360,7 +373,7 @@ class FITImportService: ObservableObject {
             bikeName: nil,
             bikeType: nil,
             timeInZone: timeInZone,
-            hrTSS: hrTSS,
+            hrTSS: tss,
             creatineMetrics: data.creatineMetrics
         )
     }
@@ -416,7 +429,9 @@ class FITImportService: ObservableObject {
             bikeName: ride.bikeName,
             bikeType: ride.bikeType,
             timeInZone: timeInZone,
-            hrTSS: hrTSS,
+            // A ride scored from power at import keeps that score — merging HR
+            // adds data, it shouldn't downgrade the TSS methodology.
+            hrTSS: ride.hrTSS ?? hrTSS,
             creatineMetrics: ride.creatineMetrics
         )
 
