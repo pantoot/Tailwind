@@ -40,8 +40,8 @@ struct TailwindApp: App {
     var body: some Scene {
         WindowGroup {
             TabView(selection: $selectedTab) {
-                ImportView()
-                    .tabItem { Label("Dashboard", systemImage: "chart.bar.fill") }
+                TodayView()
+                    .tabItem { Label("Today", systemImage: "sun.max.fill") }
                     .tag(0)
 
                 RidesTabView()

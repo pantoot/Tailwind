@@ -18,11 +18,10 @@ The app pivoted from live ride tracking to FIT file import + Apple Health sync. 
 
 ### App Architecture
 
-**Two-tab layout:**
-1. **Dashboard** (`ImportView`) — Training load metrics (CTL/ATL/TSB), form status, ramp rate warning, import button, recent rides
-2. **Creatine Focus** (`CreatineFocusView`) — Power analytics for creatine supplementation tracking
-
-**Settings** accessible via gear icon in Dashboard toolbar.
+**Three-tab layout:**
+1. **Today** (`TodayView`) — Directive hero (form state, TSB, target-TSS prescription with ramp-rate override, "why" sentence via `TrainingDirectiveService`), 2×2 glance tiles (CTL + trend, ATL, 7-day TSS vs 4-week typical, last ride), form chart with shaded form-zone bands, 3 recent rides
+2. **Rides** (`RidesTabView`) — Import actions (FIT / Apple Health / Manual / Reimport), ride history list, Power analytics segment (`PowerAnalyticsContent`)
+3. **Settings** (`SettingsTabView`) — Profile, training zones, data maintenance, diagnostics
 
 ### Core Features
 
@@ -101,9 +100,15 @@ Tailwind/
 │   ├── FITImportService.swift         # FIT file parsing (FitFileParser), 1Hz capture
 │   ├── HealthKitService.swift         # Apple Health read/write, LTHR estimation, FTP fetch
 │   ├── CreatineAnalysisService.swift  # Power analysis algorithms (static methods)
+│   ├── TrainingDirectiveService.swift # Today's prescription from form/ramp (pure, tested)
 │   └── [legacy services...]           # Bluetooth, GPS, Audio, etc. (unused)
 ├── Views/
-│   ├── ImportView.swift           # Dashboard + SettingsView + FormChart + LTHRResultView
+│   ├── TodayView.swift            # Today tab (snapshot-once dashboard)
+│   ├── Today/
+│   │   ├── DirectiveHeroCard.swift # Form state + prescription + why
+│   │   └── GlanceTileGrid.swift   # 2×2 at-a-glance tiles
+│   ├── FormChart.swift            # CTL/ATL/TSB chart with form-zone bands
+│   ├── RideRow.swift              # Shared ride list row (Today + Rides tabs)
 │   ├── CreatineFocusView.swift    # 4-widget power analytics + WeightQuickEntry
 │   ├── ImportSummaryView.swift    # Post-import summary with power highlights
 │   ├── RideDetailView.swift       # Individual ride detail + creatine metrics section
@@ -147,6 +152,9 @@ All injected as `@EnvironmentObject` into views.
 - **SwiftUI Charts** — Native charting framework (BarMark, LineMark, PointMark, RuleMark, AreaMark)
 
 ## Development Guidelines
+
+### Testing
+- No Xcode test target. Pure logic (TrainingDirectiveService, TrainingLoad bands/typical-load) is tested via `./scripts/run-tests.sh` — a standalone `swiftc` harness that compiles the model + service layer for macOS and runs assertions. Add new pure-logic tests to `scripts/TrainingDirectiveTests.swift`.
 
 ### Xcode Project
 - Uses **PBXFileSystemSynchronizedRootGroup** — new Swift files are auto-detected by Xcode, no need to edit project.pbxproj
