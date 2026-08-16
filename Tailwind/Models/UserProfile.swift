@@ -1,6 +1,6 @@
 import Foundation
 
-struct UserProfile: Codable {
+nonisolated struct UserProfile: Codable {
     var birthday: Date
     var weight: Double // in lbs
     var gender: Gender
@@ -66,7 +66,7 @@ struct UserProfile: Codable {
 }
 
 // UserDefaults storage
-extension UserProfile {
+nonisolated extension UserProfile {
     private static let profileKey = "UserProfile"
 
     static func load() -> UserProfile {

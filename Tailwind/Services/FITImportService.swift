@@ -4,8 +4,10 @@ import HealthKit
 import Combine
 import FitFileParser
 
-/// Parsed workout data from a FIT file
-struct FITWorkoutData {
+/// Parsed workout data from a FIT file.
+/// Nonisolated (and thus Sendable) so the background parse can hand it back
+/// to the MainActor import flow.
+nonisolated struct FITWorkoutData {
     let startDate: Date
     let endDate: Date
     let duration: TimeInterval
@@ -121,8 +123,9 @@ class FITImportService: ObservableObject {
         }
         print("📄 Importing FIT file: \(url.lastPathComponent)")
 
-        // Parse the FIT file
-        let workoutData = try parseFITFile(at: url)
+        // Parse the FIT file off the main thread — a 2-hour ride is ~7,200
+        // records plus 1Hz analysis, enough to visibly freeze the UI.
+        let workoutData = try await Self.parseFITFile(at: url)
 
         // Convert to Ride model
         let ride = createRide(from: workoutData)
@@ -149,8 +152,9 @@ class FITImportService: ObservableObject {
         return ride
     }
 
-    /// Parse a FIT file and extract workout data
-    private func parseFITFile(at url: URL) throws -> FITWorkoutData {
+    /// Parse a FIT file and extract workout data.
+    /// @concurrent: always runs on the global executor, never the main thread.
+    @concurrent private static func parseFITFile(at url: URL) async throws -> FITWorkoutData {
         print("📄 FIT: Opening file...")
         guard let fitFile = FitFile(file: url) else {
             throw ImportError.parsingFailed("Could not open FIT file")
@@ -309,7 +313,7 @@ class FITImportService: ObservableObject {
         let duration = end.timeIntervalSince(start)
 
         // Run creatine analysis on raw 1Hz data
-        let creatineMetrics = CreatineAnalysisService.analyze(
+        let creatineMetrics = await CreatineAnalysisService.analyze(
             power: raw1HzPower,
             heartRate: raw1HzHR,
             speed: raw1HzSpeed,
@@ -342,7 +346,7 @@ class FITImportService: ObservableObject {
         )
     }
 
-    private func averageOf(_ values: [Double]) -> Double? {
+    nonisolated private static func averageOf(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
     }

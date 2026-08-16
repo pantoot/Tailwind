@@ -10,7 +10,7 @@ import Foundation
 /// low enough to catch tempo blocks, high enough that recovery valleys
 /// (Z1/Z2) break them apart. Without an FTP it falls back to 110% of the
 /// ride's own average power, so a steady ride yields no blocks.
-struct EffortBlockService {
+nonisolated struct EffortBlockService {
 
     static let smoothingWindowSeconds = 30
     static let minimumBlockSeconds = 120

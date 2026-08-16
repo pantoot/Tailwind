@@ -2,18 +2,26 @@ import Foundation
 
 /// Analyzes raw 1Hz FIT data for creatine-relevant metrics:
 /// burst power, sprint matches, max 30s power, and HR recovery events.
-struct CreatineAnalysisService {
+/// Nonisolated: pure compute over value types, opted out of the project-wide
+/// MainActor default so a 2-hour ride's analysis never blocks the UI.
+nonisolated struct CreatineAnalysisService {
 
     /// Main entry point — called during FIT import with raw 1Hz streams.
     /// Returns nil if no power data exists (no power meter on ride).
-    static func analyze(
+    /// @concurrent forces the global executor even when the caller is MainActor.
+    @concurrent static func analyze(
         power: [(date: Date, watts: Double)],
         heartRate: [(date: Date, bpm: Double)],
         speed: [(date: Date, metersPerSecond: Double)],
         rideStart: Date,
         settings: CreatineSettings
-    ) -> CreatineMetrics? {
+    ) async -> CreatineMetrics? {
         guard !power.isEmpty else { return nil }
+
+        // One profile snapshot for the whole pass. Now that this runs off-main,
+        // a Settings edit could otherwise land between reads and mix two FTPs
+        // into one ride's metrics.
+        let userProfile = UserProfile.load()
 
         // Build dense 1-second arrays aligned to ride start
         let duration = Int(power.last!.date.timeIntervalSince(power.first!.date)) + 1
@@ -34,7 +42,7 @@ struct CreatineAnalysisService {
         // Algorithm 1: Match detection
         let matches = detectMatches(
             smoothedPower: smoothedPower,
-            threshold: settings.effectiveMatchThreshold,
+            threshold: settings.effectiveMatchThreshold(for: userProfile),
             rideStart: rideStart,
             baseTime: baseTime
         )
@@ -43,7 +51,6 @@ struct CreatineAnalysisService {
         let max30s = maxRollingAverage(densePower, windowSize: 30)
 
         // Algorithm 3: HR recovery events
-        let userProfile = UserProfile.load()
         // Recovery power threshold: Zone 1 ceiling (55% FTP) for indoor/Peloton, or 25W fallback
         let recoveryPowerThreshold: Double = {
             if let ftp = userProfile.ftp {

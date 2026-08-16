@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 // Heart Rate Training Zones based on Lactate Threshold Heart Rate (LTHR)
-struct HeartRateZones: Codable {
+nonisolated struct HeartRateZones: Codable {
     let lthr: Int
 
     // 5-Zone model based on LTHR
@@ -122,7 +122,7 @@ struct HeartRateZones: Codable {
 }
 
 // Time in zone tracking for rides
-struct TimeInZone: Codable {
+nonisolated struct TimeInZone: Codable {
     var zone1Seconds: TimeInterval = 0
     var zone2Seconds: TimeInterval = 0
     var zone3Seconds: TimeInterval = 0

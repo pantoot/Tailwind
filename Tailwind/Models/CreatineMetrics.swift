@@ -1,6 +1,6 @@
 import Foundation
 
-struct CreatineMetrics: Codable {
+nonisolated struct CreatineMetrics: Codable {
     let max30sPower: Double
     let matchCount: Int
     let matches: [PowerMatch]
@@ -15,7 +15,7 @@ struct CreatineMetrics: Codable {
 /// A sustained work interval (e.g. a Peloton Z3/Z4 block) detected from
 /// smoothed power, with the HR cost of holding it and how far HR fell once
 /// the effort ended. HR fields are nil on rides without a heart-rate signal.
-struct EffortBlock: Codable, Identifiable {
+nonisolated struct EffortBlock: Codable, Identifiable {
     let id: UUID
     let startOffset: TimeInterval    // seconds from ride start
     let duration: TimeInterval
@@ -27,7 +27,7 @@ struct EffortBlock: Codable, Identifiable {
     let recoveryDelta: Int?
 }
 
-struct PowerMatch: Codable, Identifiable {
+nonisolated struct PowerMatch: Codable, Identifiable {
     let id: UUID
     let startOffset: TimeInterval    // seconds from ride start
     let duration: TimeInterval
@@ -35,7 +35,7 @@ struct PowerMatch: Codable, Identifiable {
     let averagePower: Double
 }
 
-struct HRRecoveryEvent: Codable, Identifiable {
+nonisolated struct HRRecoveryEvent: Codable, Identifiable {
     let id: UUID
     let startOffset: TimeInterval
     let peakHR: Int

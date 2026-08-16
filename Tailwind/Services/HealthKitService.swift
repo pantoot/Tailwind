@@ -341,7 +341,7 @@ class HealthKitService: ObservableObject {
     /// uses normalized power when the caller has it — average power flattens
     /// interval rides and under-scores them by the square of the variability
     /// index (a VI of 1.07 hides ~13% of the load).
-    static func calculateTSS(
+    nonisolated static func calculateTSS(
         duration: TimeInterval,
         averagePower: Double?,
         normalizedPower: Double? = nil,
@@ -372,21 +372,21 @@ class HealthKitService: ObservableObject {
     /// TSS from power alone, or nil without both power and an FTP. Prefers
     /// normalized power over average when given. Silent, so bulk callers such
     /// as the data-quality audit don't flood the console.
-    static func powerTSS(duration: TimeInterval, averagePower: Double?, normalizedPower: Double? = nil, profile: UserProfile) -> Double? {
+    nonisolated static func powerTSS(duration: TimeInterval, averagePower: Double?, normalizedPower: Double? = nil, profile: UserProfile) -> Double? {
         guard duration > 0, let power = normalizedPower ?? averagePower, power > 0,
               let ftp = profile.ftp, ftp > 0 else { return nil }
         return stress(duration: duration, intensityFactor: power / Double(ftp))
     }
 
     /// TSS from heart rate alone, or nil without both a heart rate and an LTHR.
-    static func heartRateTSS(duration: TimeInterval, averageHeartRate: Double?, profile: UserProfile) -> Double? {
+    nonisolated static func heartRateTSS(duration: TimeInterval, averageHeartRate: Double?, profile: UserProfile) -> Double? {
         guard duration > 0, let hr = averageHeartRate, hr > 0,
               let lthr = profile.lactateThresholdHR, lthr > 0 else { return nil }
         return stress(duration: duration, intensityFactor: hr / Double(lthr))
     }
 
     /// TSS = (seconds × IF²) / 36 — the shared core of both scoring routes.
-    private static func stress(duration: TimeInterval, intensityFactor: Double) -> Double {
+    nonisolated private static func stress(duration: TimeInterval, intensityFactor: Double) -> Double {
         (duration * intensityFactor * intensityFactor) / 36.0
     }
 
@@ -441,7 +441,7 @@ class HealthKitService: ObservableObject {
         if !powerSamples.isEmpty {
             let hrSamples = await fetchHeartRateSamplesForWorkout(workout)
             // No speed data from indoor workouts, pass empty array
-            creatineMetrics = CreatineAnalysisService.analyze(
+            creatineMetrics = await CreatineAnalysisService.analyze(
                 power: powerSamples,
                 heartRate: hrSamples,
                 speed: [],
@@ -1412,7 +1412,7 @@ class HealthKitService: ObservableObject {
         let samples = await fetchRawSamples(for: ride)
         guard !samples.power.isEmpty else { return nil }
 
-        return CreatineAnalysisService.analyze(
+        return await CreatineAnalysisService.analyze(
             power: samples.power,
             heartRate: samples.heartRate,
             speed: [],

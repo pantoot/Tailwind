@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-struct CreatineSettings: Codable {
+nonisolated struct CreatineSettings: Codable {
     var creatineStartDate: Date?
     var matchThresholdWatts: Double
 
@@ -12,7 +12,12 @@ struct CreatineSettings: Codable {
 
     /// Effective match threshold: uses Zone 6 floor (120% FTP) if FTP is set, otherwise falls back to manual setting.
     var effectiveMatchThreshold: Double {
-        let profile = UserProfile.load()
+        effectiveMatchThreshold(for: UserProfile.load())
+    }
+
+    /// Same rule against an explicit profile, so a single analysis pass can use
+    /// one profile snapshot throughout instead of re-reading UserDefaults.
+    func effectiveMatchThreshold(for profile: UserProfile) -> Double {
         if let ftp = profile.ftp, ftp > 0 {
             return Double(ftp) * 1.2  // Zone 6 = 120% FTP
         }
