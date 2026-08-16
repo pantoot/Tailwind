@@ -9,14 +9,18 @@ SDK=$(xcrun --sdk macosx --show-sdk-path)
 BUILD_DIR=$(mktemp -d)
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
-SOURCES=("Tailwind/Models/TrainingLoad.swift")
-if [ -f "Tailwind/Services/TrainingDirectiveService.swift" ]; then
-  SOURCES+=("Tailwind/Services/TrainingDirectiveService.swift")
-fi
+SOURCES=("Tailwind/Models/TrainingLoad.swift" "Tailwind/Utilities/Constants.swift")
+for candidate in \
+  "Tailwind/Services/TrainingDirectiveService.swift" \
+  "Tailwind/Services/RideClassificationService.swift"
+do
+  [ -f "$candidate" ] && SOURCES+=("$candidate")
+done
 
 xcrun swiftc -sdk "$SDK" -o "$BUILD_DIR/tests" \
   "${SOURCES[@]}" \
   scripts/TestShims.swift \
+  scripts/RideClassificationTests.swift \
   scripts/TrainingDirectiveTests.swift
 
 "$BUILD_DIR/tests"

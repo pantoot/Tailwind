@@ -203,6 +203,7 @@ struct TestRunner {
         testWhySentence(t)
         testRangeSanity(t)
         testFourWeekTypical(t)
+        runRideClassificationTests(t)
         t.finish()
     }
 }
