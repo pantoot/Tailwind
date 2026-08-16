@@ -39,25 +39,38 @@ struct PerformanceMetrics {
 
     // Interpretation helpers
     var formStatus: FormStatus {
-        if tsb >= 25 {
-            return .fresh
-        } else if tsb >= 5 {
-            return .rested
-        } else if tsb >= -10 {
-            return .optimal
-        } else if tsb >= -30 {
-            return .productive
-        } else {
-            return .overreaching
-        }
+        FormStatus.status(forTSB: tsb)
     }
 
-    enum FormStatus: String {
+    enum FormStatus: String, CaseIterable {
         case fresh = "Very Fresh"
         case rested = "Rested"
         case optimal = "Optimal"
         case productive = "Productive Fatigue"
         case overreaching = "Deep Fatigue"
+
+        /// TSB lower bound per band, ordered best-form-first. The single
+        /// source of truth for band boundaries — the hero card, the directive
+        /// service, and the form-chart shading all read from here.
+        static let bands: [(status: FormStatus, lowerTSB: Double)] = [
+            (.fresh, 25),
+            (.rested, 5),
+            (.optimal, -10),
+            (.productive, -30),
+            (.overreaching, -.infinity),
+        ]
+
+        static func status(forTSB tsb: Double) -> FormStatus {
+            bands.first(where: { tsb >= $0.lowerTSB })?.status ?? .overreaching
+        }
+
+        /// The TSB interval a band occupies: lowerTSB ..< the next band up's
+        /// lowerTSB (nil upper bound for the top band). Drives chart shading.
+        var tsbBounds: (lower: Double, upper: Double?) {
+            let index = Self.bands.firstIndex(where: { $0.status == self }) ?? Self.bands.count - 1
+            let upper = index == 0 ? nil : Self.bands[index - 1].lowerTSB
+            return (Self.bands[index].lowerTSB, upper)
+        }
 
         var color: Color {
             switch self {
@@ -303,6 +316,18 @@ class TrainingLoadManager: ObservableObject {
         let averageTSS = weekLoads.isEmpty ? 0 : totalTSS / 7.0
 
         return (weekTSS: totalTSS, weekAverage: averageTSS)
+    }
+
+    /// Average weekly TSS over the trailing 28 days. dailyLoads holds no zero
+    /// rows for rest days, so the divisor must stay a fixed 4 weeks — dividing
+    /// by entry count would overstate load for anyone who takes rest days.
+    func getFourWeekTypicalWeekTSS() -> Double {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let cutoff = calendar.date(byAdding: .day, value: -28, to: today) else { return 0 }
+
+        let windowLoads = dailyLoads.filter { $0.date > cutoff && $0.date <= today }
+        return windowLoads.reduce(0) { $0 + $1.tss } / 4.0
     }
 
     /// Ramp rate: CTL now vs CTL 7 days ago. Values > 5 risk injury/illness.
