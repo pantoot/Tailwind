@@ -264,6 +264,8 @@ struct ImportSummaryView: View {
             VStack(spacing: 16) {
                 // TSS Score
                 if let tss = ride.hrTSS {
+                    let copy = summaryCopy(tss)
+                    let accent = tone(copy.tone)
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Training Stress Score")
@@ -273,32 +275,40 @@ struct ImportSummaryView: View {
                             HStack(alignment: .lastTextBaseline, spacing: 4) {
                                 Text(String(format: "%.0f", tss))
                                     .font(.system(size: 36, weight: .bold, design: .rounded))
-                                    .foregroundStyle(tssColor(tss))
+                                    .foregroundStyle(accent)
                                 Text("TSS")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
 
-                            Text(tssInterpretation(tss))
+                            Text(copy.interpretation)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            if let note = classification.confidenceNote {
+                                Text(note)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
 
                         Spacer()
 
-                        // TSS intensity gauge
+                        // Intensity gauge
                         ZStack {
                             Circle()
                                 .stroke(Color.gray.opacity(0.2), lineWidth: 8)
 
                             Circle()
-                                .trim(from: 0, to: min(tss / 150, 1.0))
-                                .stroke(tssColor(tss), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                                .trim(from: 0, to: copy.ringProgress)
+                                .stroke(accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                                 .rotationEffect(.degrees(-90))
 
-                            Text(tssIntensityLabel(tss))
+                            Text(copy.label)
                                 .font(.caption2)
                                 .fontWeight(.medium)
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
                         }
                         .frame(width: 60, height: 60)
                     }
@@ -414,25 +424,24 @@ struct ImportSummaryView: View {
 
     // MARK: - Helpers
 
-    private func tssColor(_ tss: Double) -> Color {
-        if tss < 50 { return .green }
-        if tss < 100 { return .yellow }
-        if tss < 150 { return .orange }
-        return .red
+    /// Intensity-led summary copy: a long endurance ride is a big day, not a
+    /// hard one, so the label follows IF and structure rather than raw TSS.
+    /// Rides with nothing to classify from fall back to the old TSS wording.
+    private var classification: RideClassificationService.Classification {
+        RideClassificationService.classify(ride: ride, profile: userProfile)
     }
 
-    private func tssInterpretation(_ tss: Double) -> String {
-        if tss < 50 { return "Recovery ride - low stress" }
-        if tss < 100 { return "Moderate effort - good training" }
-        if tss < 150 { return "Hard workout - significant stress" }
-        return "Very hard - extended recovery needed"
+    private func summaryCopy(_ tss: Double) -> RideClassificationService.SummaryCopy {
+        RideClassificationService.summaryCopy(for: classification, tss: tss)
     }
 
-    private func tssIntensityLabel(_ tss: Double) -> String {
-        if tss < 50 { return "Easy" }
-        if tss < 100 { return "Moderate" }
-        if tss < 150 { return "Hard" }
-        return "Very Hard"
+    private func tone(_ tone: RideClassificationService.SummaryTone) -> Color {
+        switch tone {
+        case .easy: return .green
+        case .moderate: return .yellow
+        case .hard: return .orange
+        case .veryHard: return .red
+        }
     }
 }
 

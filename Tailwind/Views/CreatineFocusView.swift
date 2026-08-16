@@ -22,6 +22,27 @@ struct PowerAnalyticsContent: View {
         return powerRides.filter { $0.date >= cutoff }
     }
 
+    /// Loaded once per render rather than once per ride. Classifying is O(1)
+    /// arithmetic and free to repeat; a UserDefaults read plus JSON decode per
+    /// ride would not be.
+    private let userProfile = UserProfile.load()
+
+    /// A steady endurance ride's 30-second peak is its cruising power sampled
+    /// at its best half-minute, not a sprint. Those points still plot — this
+    /// rider mostly rides endurance, so filtering them would routinely empty
+    /// the chart — but they render hollow so the trend isn't read as burst
+    /// fitness.
+    private func isBurst(_ ride: Ride) -> Bool {
+        RideClassificationService.classify(ride: ride, profile: userProfile)
+            .isBurstRepresentative
+    }
+
+    private func burstCaption(for rides: [Ride]) -> String {
+        rides.contains(where: isBurst)
+            ? "Hollow points had no real burst — that's cruising power, not a sprint."
+            : "No real bursts in the last 30 days — these are cruising peaks from steady rides."
+    }
+
     var body: some View {
         Group {
             if powerRides.isEmpty {
@@ -120,14 +141,18 @@ struct PowerAnalyticsContent: View {
     // MARK: - Widget 2: Max 30s Power
 
     private var max30sPowerCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        // Resolved once: `recentPowerRides` re-filters and re-sorts the whole
+        // ride history on every access.
+        let rides = recentPowerRides
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("Max 30s Power", systemImage: "bolt.fill")
                     .font(.headline)
                     .foregroundStyle(.blue)
                 Spacer()
-                if let latest = recentPowerRides.last?.creatineMetrics?.max30sPower {
-                    Text("\(Int(latest))W")
+                if let lastRide = rides.last,
+                   let latest = lastRide.creatineMetrics?.max30sPower {
+                    Text(isBurst(lastRide) ? "\(Int(latest))W" : "\(Int(latest))W cruising")
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundStyle(.blue)
@@ -138,9 +163,9 @@ struct PowerAnalyticsContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if !recentPowerRides.isEmpty {
+            if !rides.isEmpty {
                 Chart {
-                    ForEach(recentPowerRides) { ride in
+                    ForEach(rides) { ride in
                         LineMark(
                             x: .value("Date", ride.date),
                             y: .value("Watts", ride.creatineMetrics?.max30sPower ?? 0)
@@ -153,7 +178,8 @@ struct PowerAnalyticsContent: View {
                             y: .value("Watts", ride.creatineMetrics?.max30sPower ?? 0)
                         )
                         .foregroundStyle(.blue)
-                        .symbolSize(30)
+                        .opacity(isBurst(ride) ? 1.0 : 0.3)
+                        .symbolSize(isBurst(ride) ? 30 : 18)
                     }
 
                     if let startDate = creatineSettingsManager.settings.creatineStartDate {
@@ -163,13 +189,17 @@ struct PowerAnalyticsContent: View {
                     }
                 }
                 .frame(height: 160)
-                .chartYScale(domain: paddedDomain(values: recentPowerRides.map { $0.creatineMetrics?.max30sPower ?? 0 }))
+                .chartYScale(domain: paddedDomain(values: rides.map { $0.creatineMetrics?.max30sPower ?? 0 }))
                 .chartXAxis {
                     AxisMarks(values: .stride(by: .day, count: 7)) { _ in
                         AxisGridLine()
                         AxisValueLabel(format: .dateTime.day().month(.abbreviated))
                     }
                 }
+
+                Text(burstCaption(for: rides))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding()
@@ -216,7 +246,8 @@ struct PowerAnalyticsContent: View {
                             y: .value("W/kg", item.wkg)
                         )
                         .foregroundStyle(.purple)
-                        .symbolSize(30)
+                        .opacity(isBurst(item.ride) ? 1.0 : 0.3)
+                        .symbolSize(isBurst(item.ride) ? 30 : 18)
                     }
 
                     if let startDate = creatineSettingsManager.settings.creatineStartDate {
@@ -244,8 +275,12 @@ struct PowerAnalyticsContent: View {
                     }
                 }
 
-                if let latest = wkgData.last {
-                    Text(String(format: "Latest: %.2f W/kg", latest.wkg))
+                if let latestBurst = wkgData.last(where: { isBurst($0.ride) }) {
+                    Text(String(format: "Latest real burst: %.2f W/kg", latestBurst.wkg))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let latest = wkgData.last {
+                    Text(String(format: "Latest: %.2f W/kg (cruising, not a burst)", latest.wkg))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
