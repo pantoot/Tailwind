@@ -12,7 +12,8 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 SOURCES=("Tailwind/Models/TrainingLoad.swift" "Tailwind/Utilities/Constants.swift")
 for candidate in \
   "Tailwind/Services/TrainingDirectiveService.swift" \
-  "Tailwind/Services/RideClassificationService.swift"
+  "Tailwind/Services/RideClassificationService.swift" \
+  "Tailwind/Services/RideListService.swift"
 do
   [ -f "$candidate" ] && SOURCES+=("$candidate")
 done
@@ -21,6 +22,7 @@ xcrun swiftc -sdk "$SDK" -o "$BUILD_DIR/tests" \
   "${SOURCES[@]}" \
   scripts/TestShims.swift \
   scripts/RideClassificationTests.swift \
+  scripts/RideListTests.swift \
   scripts/TrainingDirectiveTests.swift
 
 "$BUILD_DIR/tests"

@@ -204,6 +204,7 @@ struct TestRunner {
         testRangeSanity(t)
         testFourWeekTypical(t)
         runRideClassificationTests(t)
+        runRideListTests(t)
         t.finish()
     }
 }
