@@ -9,13 +9,11 @@ struct RidesTabView: View {
     @EnvironmentObject var trainingLoadManager: TrainingLoadManager
     @EnvironmentObject var weightLogManager: WeightLogManager
     @EnvironmentObject var creatineSettingsManager: CreatineSettingsManager
+    @EnvironmentObject var statusCenter: ImportStatusCenter
+    @EnvironmentObject var router: AppRouter
 
-    enum Segment: String, CaseIterable {
-        case history = "History"
-        case power = "Power"
-    }
+    typealias Segment = AppRouter.RidesSegment
 
-    @State private var selectedSegment: Segment = .history
 
     // FIT import
     @State private var showingFilePicker = false
@@ -30,13 +28,19 @@ struct RidesTabView: View {
     // Apple Health import
     @State private var showingHealthImport = false
     @State private var isImportingFromHealth = false
-    @State private var healthImportProgress = ""
     @State private var showingReimportConfirm = false
+
+    /// Nil until the user first toggles a section, so the default expansion
+    /// can follow the data rather than being frozen at first render.
+    @State private var expandedMonths: Set<String>?
+    /// Set only for rides whose deletion is irreversible beyond the ride
+    /// itself — deleting a ride prunes its GPS track from disk.
+    @State private var pendingDeletion: Ride?
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("View", selection: $selectedSegment) {
+                Picker("View", selection: $router.ridesSegment) {
                     ForEach(Segment.allCases, id: \.self) { segment in
                         Text(segment.rawValue).tag(segment)
                     }
@@ -45,7 +49,10 @@ struct RidesTabView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
 
-                switch selectedSegment {
+                // Above the segment switch so progress survives History<->Power.
+                ImportStatusBanner()
+
+                switch router.ridesSegment {
                 case .history:
                     historyContent
                 case .power:
@@ -54,6 +61,21 @@ struct RidesTabView: View {
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Rides")
+            .toolbar {
+                if router.ridesSegment == .history {
+                    ToolbarItem(placement: .topBarTrailing) { importMenu }
+                }
+            }
+        }
+        .onChange(of: rideHistory.rides.count) { oldCount, newCount in
+            // A fresh import routes here; if the user has previously collapsed
+            // sections, make sure the new ride's month is open so it doesn't
+            // look like the import silently did nothing.
+            guard newCount > oldCount,
+                  var expanded = expandedMonths,
+                  let newest = rideHistory.rides.max(by: { $0.date < $1.date }) else { return }
+            expanded.insert(RideListService.monthKey(for: newest.date))
+            expandedMonths = expanded
         }
         .fileImporter(
             isPresented: $showingFilePicker,
@@ -114,105 +136,77 @@ struct RidesTabView: View {
     // MARK: - History Content
 
     private var historyContent: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Import buttons row
-                importButtonsRow
-
-                // Health import progress
-                if !healthImportProgress.isEmpty {
-                    Text(healthImportProgress)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal)
+        Group {
+            if rideHistory.rides.isEmpty {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        emptyState
+                    }
+                    .padding()
                 }
-
-                // Ride list grouped by month
-                if rideHistory.rides.isEmpty {
-                    emptyState
-                } else {
-                    rideListByMonth
-                }
-
-                Spacer(minLength: 40)
+            } else {
+                rideList
             }
-            .padding()
+        }
+        .confirmationDialog(
+            "Delete this ride?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { ride in
+            Button("Delete Ride", role: .destructive) {
+                delete(ride)
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: { ride in
+            Text("\(ride.formattedDate) — this also deletes the ride's GPS route, which can't be recovered.")
         }
     }
 
-    // MARK: - Import Buttons
+    // MARK: - Import Menu
 
-    private var importButtonsRow: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                Button(action: { showingFilePicker = true }) {
-                    HStack {
-                        if fitImportService.isImporting {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "square.and.arrow.down.fill")
-                        }
-                        Text(fitImportService.isImporting ? "Importing..." : "Import FIT")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.blue)
-                    .foregroundStyle(.white)
-                    .cornerRadius(10)
-                }
-                .disabled(fitImportService.isImporting)
+    private var isImporting: Bool {
+        fitImportService.isImporting || isImportingFromHealth
+    }
 
-                Button(action: { showingHealthImport = true }) {
-                    HStack {
-                        if isImportingFromHealth {
-                            ProgressView()
-                                .tint(.white)
-                        } else {
-                            Image(systemName: "heart.fill")
-                        }
-                        Text(isImportingFromHealth ? "Importing..." : "Apple Health")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.pink)
-                    .foregroundStyle(.white)
-                    .cornerRadius(10)
-                }
-                .disabled(isImportingFromHealth)
+    private var importMenu: some View {
+        Menu {
+            Button {
+                showingFilePicker = true
+            } label: {
+                Label("Import FIT File", systemImage: "doc.badge.plus")
             }
 
-            HStack(spacing: 12) {
-                Button(action: { showingReimportConfirm = true }) {
-                    HStack {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("Reimport Today")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.orange)
-                    .foregroundStyle(.white)
-                    .cornerRadius(10)
-                }
-                .disabled(isImportingFromHealth)
+            Button {
+                showingHealthImport = true
+            } label: {
+                Label("Import from Apple Health", systemImage: "heart.fill")
+            }
 
-                Button(action: { showingManualEntry = true }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Manual")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.green)
-                    .foregroundStyle(.white)
-                    .cornerRadius(10)
-                }
+            Button {
+                showingManualEntry = true
+            } label: {
+                Label("Manual Entry", systemImage: "square.and.pencil")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                showingReimportConfirm = true
+            } label: {
+                Label("Reimport Today", systemImage: "arrow.clockwise")
+            }
+        } label: {
+            if isImporting {
+                ProgressView()
+            } else {
+                Image(systemName: "plus")
             }
         }
+        .disabled(isImporting)
     }
 
     // MARK: - Empty State
@@ -238,37 +232,117 @@ struct RidesTabView: View {
 
     // MARK: - Ride List Grouped by Month
 
-    private var rideListByMonth: some View {
-        let grouped = Dictionary(grouping: rideHistory.rides) { ride -> String in
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM"
-            return formatter.string(from: ride.date)
+    private var rideList: some View {
+        let grouped = Dictionary(grouping: rideHistory.rides) {
+            RideListService.monthKey(for: $0.date)
         }
+        let monthKeys = RideListService.sortedMonthKeys(grouped.keys)
+        let expanded = expandedMonths ?? RideListService.defaultExpandedKeys(allKeys: monthKeys)
 
-        return ForEach(grouped.keys.sorted(by: >), id: \.self) { monthKey in
-            VStack(alignment: .leading, spacing: 8) {
-                Text(monthDisplayName(monthKey))
-                    .font(.headline)
-                    .padding(.top, 8)
-
-                let rides = (grouped[monthKey] ?? []).sorted { $0.date > $1.date }
-                ForEach(rides) { ride in
-                    NavigationLink(destination: RideDetailView(ride: ride)) {
-                        RideRow(ride: ride)
-                    }
-                    .buttonStyle(.plain)
+        return List {
+            // Interim home until Phase 3's Trends tab exists — this was the
+            // only entry point to trend charts and it lived behind a "See All"
+            // link that looked like it opened a ride list.
+            Section {
+                NavigationLink {
+                    PerformanceTrendsView()
+                } label: {
+                    Label("Performance Trends", systemImage: "chart.xyaxis.line")
                 }
+            }
+
+            totalsSection
+
+            ForEach(monthKeys, id: \.self) { key in
+                Section {
+                    if expanded.contains(key) {
+                        ForEach((grouped[key] ?? []).sorted { $0.date > $1.date }) { ride in
+                            rideRow(ride)
+                        }
+                    }
+                } header: {
+                    monthHeader(key: key, count: grouped[key]?.count ?? 0, isExpanded: expanded.contains(key)) {
+                        var next = expanded
+                        if next.contains(key) { next.remove(key) } else { next.insert(key) }
+                        expandedMonths = next
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+    }
+
+    private var totalsSection: some View {
+        Section {
+            HStack(alignment: .top) {
+                totalStat("Rides", "\(rideHistory.totalRides)")
+                Spacer()
+                totalStat("Miles", String(format: "%.0f", rideHistory.totalDistance))
+                Spacer()
+                totalStat("Time", RideListService.formatDuration(rideHistory.totalDuration))
+                Spacer()
+                totalStat("Calories", String(format: "%.0f", rideHistory.totalCalories))
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func totalStat(_ title: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+    }
+
+    private func monthHeader(key: String, count: Int, isExpanded: Bool, toggle: @escaping () -> Void) -> some View {
+        Button(action: toggle) {
+            HStack {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption2)
+                Text(RideListService.monthTitle(forKey: key))
+                Spacer()
+                Text("\(count)")
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func rideRow(_ ride: Ride) -> some View {
+        NavigationLink(destination: RideDetailView(ride: ride)) {
+            RideRow(ride: ride)
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                // Deleting prunes the ride's GPS track from disk, so outdoor
+                // rides confirm first. Indoor rides lose nothing recoverable.
+                if ride.hasRouteData {
+                    pendingDeletion = ride
+                } else {
+                    delete(ride)
+                }
+            } label: {
+                Label("Delete", systemImage: "trash")
             }
         }
     }
 
-    private func monthDisplayName(_ monthKey: String) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM"
-        guard let date = formatter.date(from: monthKey) else { return monthKey }
-        let displayFormatter = DateFormatter()
-        displayFormatter.dateFormat = "MMMM yyyy"
-        return displayFormatter.string(from: date)
+    /// The one delete path. Training load must be resynced here or CTL/ATL
+    /// keep counting the deleted ride's TSS until the next launch.
+    private func delete(_ ride: Ride) {
+        rideHistory.deleteRide(ride)
+        trainingLoadManager.syncFromRides(rideHistory.rides)
     }
 
     // MARK: - File Import
@@ -311,14 +385,14 @@ struct RidesTabView: View {
     private func importFromHealth(days: Int) async {
         await MainActor.run {
             isImportingFromHealth = true
-            healthImportProgress = "Requesting HealthKit access..."
+            statusCenter.start("Apple Health import", detail: "Requesting access…")
         }
 
         do {
             try await healthKitService.requestAuthorization()
 
             await MainActor.run {
-                healthImportProgress = "Fetching workouts..."
+                statusCenter.progress("Fetching workouts…")
             }
 
             let endDate = Date()
@@ -332,18 +406,16 @@ struct RidesTabView: View {
             let tooShort = fetched.count - workouts.count
 
             await MainActor.run {
-                healthImportProgress = "Found \(workouts.count) workouts..."
+                statusCenter.progress("Found \(workouts.count) workouts…")
             }
 
             if workouts.isEmpty {
                 await MainActor.run {
                     isImportingFromHealth = false
-                    healthImportProgress = tooShort > 0
+                    statusCenter.succeed(tooShort > 0
                         ? "No rides found in the last \(days) days (\(tooShort) were warm-ups/cool-downs)."
-                        : "No cycling workouts found in the last \(days) days."
+                        : "No cycling workouts found in the last \(days) days.")
                 }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                await MainActor.run { healthImportProgress = "" }
                 return
             }
 
@@ -373,7 +445,7 @@ struct RidesTabView: View {
                         }
 
                         imported += 1
-                        healthImportProgress = "Imported \(imported) of \(workouts.count - skipped)..."
+                        statusCenter.progress("Imported \(imported) of \(workouts.count - skipped)…")
                     }
                 } catch {
                     print("⚠️ Failed to import workout from \(workout.startDate): \(error.localizedDescription)")
@@ -393,21 +465,16 @@ struct RidesTabView: View {
                 if errors > 0 {
                     message += ", \(errors) failed"
                 }
-                healthImportProgress = message + "."
+                statusCenter.succeed(message + ".")
 
                 rideHistory.sortByDate()
-            }
-
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            await MainActor.run {
-                healthImportProgress = ""
             }
 
         } catch {
             print("❌ Health import error: \(error)")
             await MainActor.run {
                 isImportingFromHealth = false
-                healthImportProgress = "Error: \(error.localizedDescription)"
+                statusCenter.fail(error.localizedDescription)
             }
         }
     }
@@ -417,7 +484,7 @@ struct RidesTabView: View {
     private func reimportToday() async {
         await MainActor.run {
             isImportingFromHealth = true
-            healthImportProgress = "Cleaning up today's rides..."
+            statusCenter.start("Reimport today", detail: "Cleaning up today's rides…")
         }
 
         do {
@@ -429,14 +496,14 @@ struct RidesTabView: View {
 
             // Step 2: Delete Tailwind-created HealthKit workouts for today
             await MainActor.run {
-                healthImportProgress = "Removing Tailwind workouts from HealthKit..."
+                statusCenter.progress("Removing Tailwind workouts from HealthKit…")
             }
             let removedHK = try await healthKitService.deleteTailwindWorkouts(for: Date())
             print("📥 Reimport: removed \(removedHK) Tailwind workouts from HealthKit")
 
             // Step 3: Reimport today's workouts from Apple Health
             await MainActor.run {
-                healthImportProgress = "Reimporting today's workouts..."
+                statusCenter.progress("Reimporting today's workouts…")
             }
 
             let endDate = Date()
@@ -454,10 +521,8 @@ struct RidesTabView: View {
             if externalWorkouts.isEmpty {
                 await MainActor.run {
                     isImportingFromHealth = false
-                    healthImportProgress = "No external workouts found today (removed \(removedRides) dupes)."
+                    statusCenter.succeed("No external workouts found today (removed \(removedRides) dupes).")
                 }
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                await MainActor.run { healthImportProgress = "" }
                 return
             }
 
@@ -481,7 +546,7 @@ struct RidesTabView: View {
                             trainingLoadManager.addTSS(date: ride.date, tss: tss)
                         }
                         imported += 1
-                        healthImportProgress = "Reimported \(imported) of \(deduped.count)..."
+                        statusCenter.progress("Reimported \(imported) of \(deduped.count)…")
                     }
                 } catch {
                     print("⚠️ Failed to reimport workout from \(workout.startDate): \(error.localizedDescription)")
@@ -496,17 +561,14 @@ struct RidesTabView: View {
                 var msg = "Reimported \(imported) rides"
                 if removedRides > 0 { msg += " (cleaned \(removedRides) dupes)" }
                 if errors > 0 { msg += ", \(errors) failed" }
-                healthImportProgress = msg + "."
+                statusCenter.succeed(msg + ".")
             }
-
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await MainActor.run { healthImportProgress = "" }
 
         } catch {
             print("❌ Reimport error: \(error)")
             await MainActor.run {
                 isImportingFromHealth = false
-                healthImportProgress = "Error: \(error.localizedDescription)"
+                statusCenter.fail(error.localizedDescription)
             }
         }
     }
