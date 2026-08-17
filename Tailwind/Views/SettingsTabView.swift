@@ -270,6 +270,8 @@ struct SettingsTabView: View {
                 }
 
                 Section("Data") {
+                    CalorieRepairSection()
+
                     Button(action: cleanUpDuplicates) {
                         HStack {
                             Label("Clean Up Duplicates", systemImage: "doc.on.doc")

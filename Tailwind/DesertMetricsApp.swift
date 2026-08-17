@@ -5,6 +5,7 @@ import CoreLocation
 @main
 struct TailwindApp: App {
     @StateObject private var services = AppServices()
+    @StateObject private var router = AppRouter()
     @Environment(\.scenePhase) private var scenePhase
 
     /// Track if we're handling a URL import (prevents race with pending imports)
@@ -15,7 +16,6 @@ struct TailwindApp: App {
         UserDefaults(suiteName: "group.com.rick.Tailwind")
     }
 
-    @State private var selectedTab = 0
 
     /// Guards against two overlapping pending-import sweeps (onAppear + foreground
     /// can both fire within the same half-second).
@@ -39,18 +39,18 @@ struct TailwindApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TabView(selection: $selectedTab) {
+            TabView(selection: $router.selectedTab) {
                 TodayView()
                     .tabItem { Label("Today", systemImage: "sun.max.fill") }
-                    .tag(0)
+                    .tag(AppRouter.Tab.today)
 
                 RidesTabView()
                     .tabItem { Label("Rides", systemImage: "bicycle") }
-                    .tag(1)
+                    .tag(AppRouter.Tab.rides)
 
                 SettingsTabView()
                     .tabItem { Label("Settings", systemImage: "gearshape") }
-                    .tag(2)
+                    .tag(AppRouter.Tab.settings)
             }
                 .environmentObject(services.fitImportService)
                 .environmentObject(services.rideHistory)
@@ -58,6 +58,8 @@ struct TailwindApp: App {
                 .environmentObject(services.trainingLoadManager)
                 .environmentObject(services.weightLogManager)
                 .environmentObject(services.creatineSettingsManager)
+                .environmentObject(services.importStatusCenter)
+                .environmentObject(router)
                 .onOpenURL { url in
                     isHandlingURLImport = true
                     handleIncomingURL(url)
@@ -121,6 +123,9 @@ struct TailwindApp: App {
 
                 Task {
                     defer { importsInFlight.remove(filePath) }
+                    await MainActor.run {
+                        services.importStatusCenter.start("Importing FIT file", detail: fileURL.lastPathComponent)
+                    }
                     do {
                         let ride = try await services.fitImportService.importFITFile(from: fileURL)
                         print("✅ Successfully imported ride: \(ride.formattedDate), \(ride.formattedDistance)")
@@ -134,7 +139,13 @@ struct TailwindApp: App {
                         }
 
                         // Switch to Rides tab
-                        await MainActor.run { selectedTab = 1 }
+                        await MainActor.run {
+                            router.showAllRides()
+                            services.importStatusCenter.succeed(
+                                "\(ride.formattedDate) — \(ride.formattedDistance)",
+                                title: "Ride imported"
+                            )
+                        }
 
                         // Clean up the temp file after import
                         try? FileManager.default.removeItem(at: fileURL)
@@ -142,6 +153,9 @@ struct TailwindApp: App {
                     } catch FITImportService.ImportError.duplicateRide {
                         // Terminal, not retryable — re-queueing would alert forever.
                         print("⚠️ Duplicate FIT import ignored: \(filePath)")
+                        await MainActor.run {
+                            services.importStatusCenter.succeed("Already imported — skipped.", title: "Duplicate ride")
+                        }
                         try? FileManager.default.removeItem(at: fileURL)
                         clearImportFailures(path: filePath)
                     } catch {
@@ -152,6 +166,7 @@ struct TailwindApp: App {
                         // retry cap, give up so a corrupt file can't alert forever.
                         let failures = recordImportFailure(path: filePath)
                         await MainActor.run {
+                            services.importStatusCenter.fail(error.localizedDescription, title: "Import failed")
                             if failures >= maxImportRetries {
                                 clearImportFailures(path: filePath)
                                 try? FileManager.default.removeItem(at: fileURL)
@@ -171,6 +186,10 @@ struct TailwindApp: App {
         else if url.pathExtension.lowercased() == "fit" {
             print("📥 Processing direct FIT file: \(url.path)")
             Task {
+                await MainActor.run {
+                    services.importStatusCenter.start("Importing FIT file", detail: url.lastPathComponent)
+                }
+
                 do {
                     let ride = try await services.fitImportService.importFITFile(from: url)
                     print("✅ Successfully imported ride: \(ride.formattedDate), \(ride.formattedDistance)")
@@ -184,7 +203,7 @@ struct TailwindApp: App {
                     }
 
                     // Switch to Rides tab
-                    await MainActor.run { selectedTab = 1 }
+                    await MainActor.run { router.showAllRides() }
                 } catch {
                     print("❌ Failed to import FIT file: \(error)")
                     await MainActor.run {
@@ -302,7 +321,11 @@ struct TailwindApp: App {
                         // Dequeue only now that the import has fully succeeded
                         clearPendingImport(path: path)
                         clearImportFailures(path: path)
-                        selectedTab = 1
+                        router.showAllRides()
+                        services.importStatusCenter.succeed(
+                            "\(ride.formattedDate) — \(ride.formattedDistance)",
+                            title: "Ride imported"
+                        )
                     }
 
                     // Clean up after successful import
@@ -314,10 +337,14 @@ struct TailwindApp: App {
                     await MainActor.run {
                         clearPendingImport(path: path)
                         clearImportFailures(path: path)
+                        services.importStatusCenter.succeed("Already imported — skipped.", title: "Duplicate ride")
                     }
                     try? FileManager.default.removeItem(at: url)
                 } catch {
                     let attempts = recordImportFailure(path: path)
+                    await MainActor.run {
+                        services.importStatusCenter.fail(error.localizedDescription, title: "Import failed")
+                    }
                     if attempts >= maxImportRetries {
                         print("❌ Pending import failed \(attempts) times, giving up: \(error)")
                         await MainActor.run {
@@ -350,6 +377,7 @@ class AppServices: ObservableObject {
     let trainingLoadManager: TrainingLoadManager
     let weightLogManager: WeightLogManager
     let creatineSettingsManager: CreatineSettingsManager
+    let importStatusCenter: ImportStatusCenter
 
     init() {
         // Initialize core services
@@ -358,6 +386,7 @@ class AppServices: ObservableObject {
         self.trainingLoadManager = TrainingLoadManager()
         self.weightLogManager = WeightLogManager()
         self.creatineSettingsManager = CreatineSettingsManager()
+        self.importStatusCenter = ImportStatusCenter()
 
         // FIT import service depends on HealthKit and RideHistory
         self.fitImportService = FITImportService(

@@ -20,7 +20,7 @@ The app pivoted from live ride tracking to FIT file import + Apple Health sync. 
 
 **Three-tab layout:**
 1. **Today** (`TodayView`) — Directive hero (form state, TSB, target-TSS prescription with ramp-rate override, "why" sentence via `TrainingDirectiveService`), 2×2 glance tiles (CTL + trend, ATL, 7-day TSS vs 4-week typical, last ride), form chart with shaded form-zone bands, 3 recent rides
-2. **Rides** (`RidesTabView`) — Import actions (FIT / Apple Health / Manual / Reimport), ride history list, Power analytics segment (`PowerAnalyticsContent`)
+2. **Rides** (`RidesTabView`) — One ride list: lifetime totals header, collapsible month sections, swipe-to-delete (confirms when the ride has a GPS track, since deleting prunes the track file). Import lives in a toolbar ＋ menu (FIT / Apple Health / Manual / Reimport). Power analytics segment (`PowerAnalyticsContent`). Persistent `ImportStatusBanner` above the segment switch.
 3. **Settings** (`SettingsTabView`) — Profile, training zones, data maintenance, diagnostics
 
 ### Core Features
@@ -101,6 +101,9 @@ Tailwind/
 │   ├── HealthKitService.swift         # Apple Health read/write, LTHR estimation, FTP fetch
 │   ├── CreatineAnalysisService.swift  # Power analysis algorithms (static methods)
 │   ├── TrainingDirectiveService.swift # Today's prescription from form/ramp (pure, tested)
+│   ├── RideClassificationService.swift # Intensity/structure axes + burst flag (pure, tested)
+│   ├── RideListService.swift          # Month grouping/expansion/duration (pure, tested)
+│   ├── ImportStatusCenter.swift       # App-level import job status
 │   └── [legacy services...]           # Bluetooth, GPS, Audio, etc. (unused)
 ├── Views/
 │   ├── TodayView.swift            # Today tab (snapshot-once dashboard)
@@ -109,12 +112,14 @@ Tailwind/
 │   │   └── GlanceTileGrid.swift   # 2×2 at-a-glance tiles
 │   ├── FormChart.swift            # CTL/ATL/TSB chart with form-zone bands
 │   ├── RideRow.swift              # Shared ride list row (Today + Rides tabs)
+│   ├── ImportStatusBanner.swift   # Durable import job status
+│   ├── CalorieRepairSection.swift # Fix-calories tool (Settings > Data)
 │   ├── CreatineFocusView.swift    # 4-widget power analytics + WeightQuickEntry
 │   ├── ImportSummaryView.swift    # Post-import summary with power highlights
 │   ├── RideDetailView.swift       # Individual ride detail + creatine metrics section
-│   ├── RideHistoryView.swift      # Full ride list
 │   ├── WeightLogView.swift        # Weight entry form + history
-│   └── SensorEditorView.swift     # Sensor management (legacy)
+│   ├── RidesTabView.swift         # Rides tab: one list + ＋ import menu + Power segment
+│   └── SettingsTabView.swift      # Profile, zones, data maintenance, diagnostics
 ├── DesertMetricsApp.swift         # App entry, TabView, AppServices, URL/share handling
 ├── Info.plist                     # URL scheme, FIT UTI, document types
 └── Tailwind.entitlements          # App Group, HealthKit
@@ -134,8 +139,11 @@ class AppServices: ObservableObject {
     let trainingLoadManager: TrainingLoadManager
     let weightLogManager: WeightLogManager
     let creatineSettingsManager: CreatineSettingsManager
+    let importStatusCenter: ImportStatusCenter
 }
 ```
+
+Navigation state lives in `AppRouter` (`Models/AppRouter.swift`): named tab enum plus the Rides segment, so any screen can hand the user to the full ride list via `router.showAllRides()`.
 
 All injected as `@EnvironmentObject` into views.
 

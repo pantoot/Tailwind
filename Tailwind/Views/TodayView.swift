@@ -6,6 +6,7 @@ import Charts
 struct TodayView: View {
     @EnvironmentObject var rideHistory: RideHistory
     @EnvironmentObject var trainingLoadManager: TrainingLoadManager
+    @EnvironmentObject var router: AppRouter
 
     /// Everything the screen shows, computed once per render. The EMA walks
     /// behind these numbers are not free — referencing manager methods
@@ -107,10 +108,8 @@ struct TodayView: View {
                 Text("Recent Rides")
                     .font(.headline)
                 Spacer()
-                NavigationLink("See All") {
-                    RideHistoryView()
-                }
-                .font(.subheadline)
+                Button("See All") { router.showAllRides() }
+                    .font(.subheadline)
             }
 
             VStack(spacing: 8) {
@@ -129,4 +128,5 @@ struct TodayView: View {
     TodayView()
         .environmentObject(RideHistory())
         .environmentObject(TrainingLoadManager())
+        .environmentObject(AppRouter())
 }
