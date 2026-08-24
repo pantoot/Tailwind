@@ -79,8 +79,9 @@ FIT File (1Hz records) ──► CreatineAnalysisService.analyze()
 
 #### Max HR Estimation
 - Scans last 2 years of cycling workouts, two-phase: cheap per-workout `HKStatisticsQuery` raw-max ranking, then full sample fetch for only the top 25
-- `MaxHREstimationService` (pure, tested): rolling median-of-5 kills 1–2 sample sensor spikes (strap static, optical cadence-lock), then best time-weighted 15s sustained window = credible max
-- Candidates flag spiky data when raw max exceeds sustained by > 8 bpm
+- `MaxHREstimationService` (pure, tested): rolling median-of-5 kills 1–2 sample sensor spikes, then best time-weighted 15s sustained window = credible max
+- Continuity check kills *sustained* artifacts (chest-strap doubling to 2× real HR, optical cadence-lock): a sample is credible only within 30 bpm of the workout median or of a credible sample in the trailing minute — real HR climbs through the values below a peak; a non-credible block can't legitimize its own tail. Rejected blocks are surfaced per candidate, not silently dropped
+- Candidates show source app/device and flag spiky data when raw max exceeds sustained by > 8 bpm
 - Settings > Training Zones > "Estimate Max HR from Data"; apply writes the profile Max HR field (`MaxHRResultView`)
 
 #### User Profile

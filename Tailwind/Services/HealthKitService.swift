@@ -1297,6 +1297,12 @@ class HealthKitService: ObservableObject {
         let sustainedHR: Double
         let rawMaxHR: Double
         let duration: TimeInterval
+        /// App/device that recorded the workout — lets the user recognize
+        /// which sensor produced a suspect reading.
+        let sourceName: String
+        /// Sustained block discarded by the continuity check (strap doubling,
+        /// cadence lock) — shown so the discard is visible, not silent.
+        let rejectedPeakHR: Double?
         /// Raw max well above the sustained value means this workout's HR
         /// stream contains spikes the filter rejected.
         var isSpiky: Bool { rawMaxHR - sustainedHR > MaxHREstimationService.spikyDataGap }
@@ -1427,7 +1433,9 @@ class HealthKitService: ObservableObject {
                 date: entry.workout.startDate,
                 sustainedHR: result.bestSustainedHR,
                 rawMaxHR: result.rawMaxHR,
-                duration: entry.workout.duration
+                duration: entry.workout.duration,
+                sourceName: entry.workout.sourceRevision.source.name,
+                rejectedPeakHR: result.rejectedPeakHR
             ))
 
             // Brief pause between workouts for memory

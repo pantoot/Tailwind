@@ -20,6 +20,52 @@ func runMaxHREstimationTests(_ t: TestRun) {
     testUnsortedInput(t)
     testRecordingGap(t)
     testGapSampleCannotDominateWindow(t)
+    testStepEntryRejected(t)
+    testGenuineRampAccepted(t)
+    testEffortAtRecordingStartUnverifiable(t)
+}
+
+private func testStepEntryRejected(_ t: TestRun) {
+    // Chest-strap doubling: poor contact makes the strap report 2x real HR
+    // (140 -> 210) as a step, sustained for 30s — long enough to survive the
+    // median filter and fill a window. Real HR is continuous: you cannot
+    // reach 210 without climbing through the 180s and 190s first. The block
+    // must be rejected and the genuine signal reported instead.
+    var bpm = [Double](repeating: 140, count: 90)
+    for i in 60..<90 { bpm[i] = 210 }
+    bpm += [Double](repeating: 140, count: 30)
+    guard let r = MaxHREstimationService.bestSustained(samples: oneHz(bpm)) else {
+        t.expect(false, "doubled signal produces a result"); return
+    }
+    t.expectEqual(r.bestSustainedHR.rounded(), 140, "doubling artifact block is rejected")
+    t.expectEqual(r.rejectedPeakHR?.rounded(), 210, "rejected peak is reported for review")
+    t.expectEqual(r.rawMaxHR, 210, "raw max still shows the artifact")
+}
+
+private func testGenuineRampAccepted(_ t: TestRun) {
+    // The same ramp-and-hold as testGenuinePlateauSurvives: a continuous climb
+    // into the peak must NOT be rejected by the step-entry check.
+    var bpm: [Double] = (0..<60).map { 140 + Double($0) * 28.0 / 59.0 }
+    bpm += [Double](repeating: 168, count: 20)
+    guard let r = MaxHREstimationService.bestSustained(samples: oneHz(bpm)) else {
+        t.expect(false, "ramp-and-hold produces a result"); return
+    }
+    t.expect(r.bestSustainedHR > 167.5, "continuous ramp to max is accepted, got \(r.bestSustainedHR)")
+    t.expect(r.rejectedPeakHR == nil, "nothing rejected on a continuous signal")
+}
+
+private func testEffortAtRecordingStartUnverifiable(_ t: TestRun) {
+    // Dry-strap start: the strap reads high garbage until sweat makes contact.
+    // An opening block far above the workout's typical HR, with no approach
+    // history, cannot define the sustained max (real max efforts don't happen
+    // before a warmup).
+    var bpm = [Double](repeating: 180, count: 20)
+    bpm += [Double](repeating: 140, count: 100)
+    guard let r = MaxHREstimationService.bestSustained(samples: oneHz(bpm)) else {
+        t.expect(false, "opening-peak signal produces a result"); return
+    }
+    t.expectEqual(r.bestSustainedHR.rounded(), 140, "unverifiable opening peak cannot win")
+    t.expect(r.rejectedPeakHR != nil, "opening peak reported as rejected")
 }
 
 private func testGapSampleCannotDominateWindow(_ t: TestRun) {

@@ -60,7 +60,7 @@ struct MaxHRResultView: View {
                     Text("How this was calculated")
                         .font(.headline)
 
-                    Text("Found the highest heart rate you held for a full 15 seconds across your cycling workouts, after filtering out single-sample sensor spikes (strap static, optical artifacts). Your true instantaneous max is typically 1\u{2013}3 bpm above this. A raw max far above the sustained value means that workout's data was spiky \u{2014} the raw number is not trustworthy.")
+                    Text("Found the highest heart rate you held for a full 15 seconds across your cycling workouts, after filtering out sensor artifacts: single-sample spikes, and sustained bogus blocks the signal stepped into discontinuously (a chest strap doubling to 2\u{00d7} your real HR, an optical sensor locking onto cadence). Real HR climbs through the values below a peak \u{2014} readings that appear from nowhere are discarded and listed as rejected. Your true instantaneous max is typically 1\u{2013}3 bpm above the sustained value.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -146,48 +146,57 @@ struct MaxHRResultView: View {
                 .font(.headline)
 
             ForEach(Array(candidates.prefix(5).enumerated()), id: \.offset) { index, candidate in
-                HStack {
-                    Text("#\(index + 1)")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24)
-
-                    VStack(alignment: .leading) {
-                        Text(candidate.date, style: .date)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("#\(index + 1)")
                             .font(.caption)
-                        Text(formatDuration(candidate.duration))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24)
+
+                        VStack(alignment: .leading) {
+                            Text(candidate.date, style: .date)
+                                .font(.caption)
+                            Text("\(formatDuration(candidate.duration)) \u{00b7} \(candidate.sourceName)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Spacer()
+
+                        if candidate.isSpiky {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .help("Raw max well above sustained — spiky data")
+                        }
+
+                        VStack(alignment: .trailing) {
+                            Text(String(format: "%.0f", candidate.sustainedHR))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Text("15s held")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(width: 52)
+
+                        VStack(alignment: .trailing) {
+                            Text(String(format: "%.0f", candidate.rawMaxHR))
+                                .font(.subheadline)
+                            Text("raw max")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(width: 52)
                     }
 
-                    Spacer()
-
-                    if candidate.isSpiky {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                    if let rejected = candidate.rejectedPeakHR {
+                        Text("Rejected a sustained \(Int(rejected.rounded())) bpm block \u{2014} signal stepped there discontinuously (sensor artifact)")
+                            .font(.caption2)
                             .foregroundStyle(.orange)
-                            .help("Raw max well above sustained — spiky data")
+                            .padding(.leading, 24)
                     }
-
-                    VStack(alignment: .trailing) {
-                        Text(String(format: "%.0f", candidate.sustainedHR))
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Text("15s held")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(width: 52)
-
-                    VStack(alignment: .trailing) {
-                        Text(String(format: "%.0f", candidate.rawMaxHR))
-                            .font(.subheadline)
-                        Text("raw max")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(width: 52)
                 }
                 .padding(.vertical, 4)
 
