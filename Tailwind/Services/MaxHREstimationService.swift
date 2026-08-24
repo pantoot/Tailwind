@@ -146,6 +146,52 @@ struct MaxHREstimationService {
         return mask
     }
 
+    // MARK: - Cross-workout plausibility
+
+    /// Threshold HR is physiologically 85–92% of true max, so max HR cannot
+    /// exceed LTHR by more than ~1.18× even at the extreme of that envelope.
+    /// 1.20 leaves headroom past it: the ceiling only rejects the impossible —
+    /// a strap doubling to 2× real HR — never a genuine outlier. This personal
+    /// bound catches what the continuity check cannot: doubling that persists
+    /// for most of a ride inflates the workout's own median, letting the
+    /// artifact legitimize itself.
+    private static let maxToLTHRRatio = 1.20
+
+    static func plausibleCeiling(lthr: Double) -> Double {
+        lthr * maxToLTHRRatio
+    }
+
+    /// Deduplicates workouts whose time ranges substantially overlap — the
+    /// same physical ride recorded by two apps (e.g. Peloton and a head unit
+    /// wired to the same strap). Start-time dedup misses these because the
+    /// recordings start minutes apart. Keeps the longer recording of each
+    /// overlapping pair; returns the indices to keep, ordered by start.
+    static func dedupeOverlappingWorkouts(
+        _ intervals: [(start: TimeInterval, duration: TimeInterval)]
+    ) -> [Int] {
+        let duplicateOverlapFraction = 0.5
+        let order = intervals.indices.sorted { intervals[$0].start < intervals[$1].start }
+
+        var kept: [Int] = []
+        for idx in order {
+            let current = intervals[idx]
+            if let lastIdx = kept.last {
+                let last = intervals[lastIdx]
+                let overlap = min(last.start + last.duration, current.start + current.duration)
+                    - max(last.start, current.start)
+                let shorter = min(last.duration, current.duration)
+                if shorter > 0, overlap >= shorter * duplicateOverlapFraction {
+                    if current.duration > last.duration {
+                        kept[kept.count - 1] = idx
+                    }
+                    continue
+                }
+            }
+            kept.append(idx)
+        }
+        return kept
+    }
+
     /// Rolling median (window of 5, clipped at the edges): removes spikes of
     /// 1–2 samples while leaving genuine plateaus untouched.
     private static func medianFiltered(_ values: [Double]) -> [Double] {

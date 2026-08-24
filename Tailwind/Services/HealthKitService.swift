@@ -1289,7 +1289,11 @@ class HealthKitService: ObservableObject {
         let rawMaxHR: Double
         let workoutDate: Date
         let workoutDuration: TimeInterval
-        let candidates: [MaxHRCandidate]  // Top efforts for context
+        let candidates: [MaxHRCandidate]  // Top plausible efforts for context
+        /// Efforts excluded because their sustained HR exceeds the ceiling
+        /// derived from the user's LTHR — shown so the exclusion is visible.
+        let implausible: [MaxHRCandidate]
+        let plausibleCeiling: Double?
     }
 
     struct MaxHRCandidate {
@@ -1312,8 +1316,12 @@ class HealthKitService: ObservableObject {
     /// HR across cycling workouts. Two-phase: a cheap statistics query ranks
     /// every workout by raw peak (raw ≥ sustained, so ranking by it can only
     /// over-include, never miss a contender), then only the top workouts get a
-    /// full sample fetch and filtering. Returns nil if insufficient data.
-    func estimateMaxHR(days: Int = 730, progress: @escaping (String) -> Void) async -> MaxHREstimate? {
+    /// full sample fetch and filtering. Candidates above `plausibleCeiling`
+    /// (LTHR-derived) are excluded from the headline but reported. Returns nil
+    /// if insufficient data.
+    func estimateMaxHR(days: Int = 730,
+                       plausibleCeiling: Double? = nil,
+                       progress: @escaping (String) -> Void) async -> MaxHREstimate? {
         let endDate = Date()
         guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return nil }
 
@@ -1328,14 +1336,14 @@ class HealthKitService: ObservableObject {
         }
 
         // Even short workouts can hold a max effort, but sub-10-minute entries
-        // are usually fragments. Deduplicate by start time — HealthKit returns
-        // the same ride from multiple sources.
+        // are usually fragments. Deduplicate by time-range overlap — the same
+        // ride recorded by two apps (Peloton + a head unit on the same strap)
+        // starts minutes apart, so start-time dedup misses it.
         let longEnough = workouts.filter { $0.duration >= 600 }
-        var seen = Set<Int>()
-        let eligible = longEnough.filter { workout in
-            let key = Int(workout.startDate.timeIntervalSinceReferenceDate / 60)
-            return seen.insert(key).inserted
-        }
+        let keepIndices = MaxHREstimationService.dedupeOverlappingWorkouts(
+            longEnough.map { (start: $0.startDate.timeIntervalSinceReferenceDate, duration: $0.duration) }
+        )
+        let eligible = keepIndices.map { longEnough[$0] }
         guard !eligible.isEmpty else {
             progress("No workouts found")
             return nil
@@ -1448,7 +1456,21 @@ class HealthKitService: ObservableObject {
         }
 
         let sorted = candidates.sorted { $0.sustainedHR > $1.sustainedHR }
-        let best = sorted[0]
+        let plausible: [MaxHRCandidate]
+        let implausible: [MaxHRCandidate]
+        if let ceiling = plausibleCeiling {
+            plausible = sorted.filter { $0.sustainedHR <= ceiling }
+            implausible = sorted.filter { $0.sustainedHR > ceiling }
+        } else {
+            plausible = sorted
+            implausible = []
+        }
+
+        guard let best = plausible.first else {
+            print("⚠️ Max HR estimation: all \(sorted.count) candidates exceed the plausibility ceiling \(plausibleCeiling ?? 0)")
+            progress("Only implausible readings found")
+            return nil
+        }
 
         return MaxHREstimate(
             estimatedMaxHR: Int(best.sustainedHR.rounded()),
@@ -1456,7 +1478,9 @@ class HealthKitService: ObservableObject {
             rawMaxHR: best.rawMaxHR,
             workoutDate: best.date,
             workoutDuration: best.duration,
-            candidates: Array(sorted.prefix(5))
+            candidates: Array(plausible.prefix(5)),
+            implausible: Array(implausible.prefix(3)),
+            plausibleCeiling: plausibleCeiling
         )
     }
 

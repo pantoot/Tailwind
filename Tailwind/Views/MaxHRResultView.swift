@@ -114,6 +114,10 @@ struct MaxHRResultView: View {
                     candidateList(estimate.candidates)
                 }
 
+                if !estimate.implausible.isEmpty {
+                    implausibleList(estimate.implausible, ceiling: estimate.plausibleCeiling)
+                }
+
                 // Apply button
                 if currentMaxHR != estimate.estimatedMaxHR {
                     Button(action: {
@@ -203,6 +207,49 @@ struct MaxHRResultView: View {
                 if index < min(4, candidates.count - 1) {
                     Divider()
                 }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+    }
+
+    private func implausibleList(_ candidates: [HealthKitService.MaxHRCandidate],
+                                 ceiling: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Excluded — Not Physiologically Possible", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+
+            if let ceiling {
+                Text("Your threshold HR bounds your true max at ~\(Int(ceiling.rounded())) bpm (threshold is 85\u{2013}92% of max). Sustained readings above that are sensor faults \u{2014} typically a chest strap doubling your real HR. A cluster of them on nearby dates usually means the strap was failing that week.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(Array(candidates.enumerated()), id: \.offset) { _, candidate in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(candidate.date, style: .date)
+                            .font(.caption)
+                        Text("\(formatDuration(candidate.duration)) \u{00b7} \(candidate.sourceName)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing) {
+                        Text(String(format: "%.0f", candidate.sustainedHR))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.orange)
+                        Text("likely 2\u{00d7} of \(Int((candidate.sustainedHR / 2).rounded()))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.vertical, 2)
             }
         }
         .padding()

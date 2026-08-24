@@ -1091,7 +1091,12 @@ struct SettingsTabView: View {
             return
         }
 
-        let estimate = await healthKitService.estimateMaxHR(days: 730) { status in
+        // The user's LTHR bounds what's physiologically possible for their
+        // max — a personal ceiling, unlike the age formulas.
+        let lthr = Double(Int(lactateThresholdHR) ?? 0)
+        let ceiling = lthr > 0 ? MaxHREstimationService.plausibleCeiling(lthr: lthr) : nil
+
+        let estimate = await healthKitService.estimateMaxHR(days: 730, plausibleCeiling: ceiling) { status in
             Task { @MainActor in
                 maxHRProgress = status
             }

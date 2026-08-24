@@ -23,6 +23,43 @@ func runMaxHREstimationTests(_ t: TestRun) {
     testStepEntryRejected(t)
     testGenuineRampAccepted(t)
     testEffortAtRecordingStartUnverifiable(t)
+    testOverlapDedup(t)
+    testLTHRCeiling(t)
+}
+
+private func testOverlapDedup(_ t: TestRun) {
+    typealias Interval = (start: TimeInterval, duration: TimeInterval)
+    func keep(_ intervals: [Interval]) -> [Int] {
+        MaxHREstimationService.dedupeOverlappingWorkouts(intervals)
+    }
+
+    t.expectEqual(keep([]), [], "empty input")
+    t.expectEqual(keep([(0, 3600)]), [0], "single workout kept")
+
+    // Disjoint workouts all survive.
+    t.expectEqual(keep([(0, 3600), (7200, 3600)]), [0, 1], "disjoint workouts kept")
+
+    // The same ride recorded by two apps (Peloton 60m inside an ELEMNT 69m
+    // recording that started earlier): keep the longer recording only.
+    t.expectEqual(keep([(300, 3600), (0, 4140)]), [1], "overlapping duplicate keeps the longer")
+
+    // Back-to-back rides with a small clock bleed are NOT duplicates —
+    // overlap must cover most of the shorter recording.
+    t.expectEqual(keep([(0, 3000), (2900, 3000)]), [0, 1], "small bleed is not a duplicate")
+
+    // A short fragment inside a long ride is absorbed.
+    t.expectEqual(keep([(0, 5400), (1200, 900)]), [0], "contained fragment absorbed")
+}
+
+private func testLTHRCeiling(_ t: TestRun) {
+    // Threshold HR is physiologically 85-92% of true max, so max HR cannot
+    // exceed LTHR by more than ~1.18x even at the extreme. The ceiling has
+    // headroom past that: it must only reject the impossible (strap doubling
+    // at 2x), never a genuine outlier.
+    let ceiling = MaxHREstimationService.plausibleCeiling(lthr: 152)
+    t.expect(ceiling > 152.0 / 0.85, "ceiling clears the physiological envelope, got \(ceiling)")
+    t.expect(ceiling < 152 * 1.3, "ceiling still rejects doubled readings, got \(ceiling)")
+    t.expect(ceiling < 197, "ceiling rejects the 197-206 doubling cluster, got \(ceiling)")
 }
 
 private func testStepEntryRejected(_ t: TestRun) {
