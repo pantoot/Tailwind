@@ -77,6 +77,12 @@ FIT File (1Hz records) ──► CreatineAnalysisService.analyze()
 - Deduplicates workouts by start time (HealthKit returns same ride from multiple sources)
 - Shows top 5 candidates with option to apply estimated LTHR
 
+#### Max HR Estimation
+- Scans last 2 years of cycling workouts, two-phase: cheap per-workout `HKStatisticsQuery` raw-max ranking, then full sample fetch for only the top 25
+- `MaxHREstimationService` (pure, tested): rolling median-of-5 kills 1–2 sample sensor spikes (strap static, optical cadence-lock), then best time-weighted 15s sustained window = credible max
+- Candidates flag spiky data when raw max exceeds sustained by > 8 bpm
+- Settings > Training Zones > "Estimate Max HR from Data"; apply writes the profile Max HR field (`MaxHRResultView`)
+
 #### User Profile
 - Birthday, weight, gender
 - LTHR (Lactate Threshold HR) — required for TSS/zone calculations
@@ -103,6 +109,7 @@ Tailwind/
 │   ├── TrainingDirectiveService.swift # Today's prescription from form/ramp (pure, tested)
 │   ├── RideClassificationService.swift # Intensity/structure axes + burst flag (pure, tested)
 │   ├── RideListService.swift          # Month grouping/expansion/duration (pure, tested)
+│   ├── MaxHREstimationService.swift   # Spike-filtered sustained max HR (pure, tested)
 │   ├── ImportStatusCenter.swift       # App-level import job status
 │   └── [legacy services...]           # Bluetooth, GPS, Audio, etc. (unused)
 ├── Views/

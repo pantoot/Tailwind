@@ -45,6 +45,12 @@ struct SettingsTabView: View {
     @State private var lthrProgress = ""
     @State private var showingLTHRResult = false
 
+    // Max HR estimation
+    @State private var isEstimatingMaxHR = false
+    @State private var maxHREstimate: HealthKitService.MaxHREstimate?
+    @State private var maxHRProgress = ""
+    @State private var showingMaxHRResult = false
+
     /// Weight as loaded at init — Save only overrides the profile weight when the
     /// field was actually edited, so a weight-log sync that landed while this view
     /// held stale state isn't silently reverted.
@@ -170,6 +176,29 @@ struct SettingsTabView: View {
 
                     if !lthrProgress.isEmpty {
                         Text(lthrProgress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button(action: {
+                        Task { await runMaxHREstimation() }
+                    }) {
+                        HStack {
+                            Label("Estimate Max HR from Data", systemImage: "bolt.heart")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if isEstimatingMaxHR {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                    .disabled(isEstimatingMaxHR)
+
+                    if !maxHRProgress.isEmpty {
+                        Text(maxHRProgress)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -484,6 +513,16 @@ struct SettingsTabView: View {
                     currentLTHR: Int(lactateThresholdHR),
                     onApply: { newLTHR in
                         lactateThresholdHR = String(newLTHR)
+                        saveProfile()
+                    }
+                )
+            }
+            .sheet(isPresented: $showingMaxHRResult) {
+                MaxHRResultView(
+                    estimate: maxHREstimate,
+                    currentMaxHR: Int(maxHeartRate),
+                    onApply: { newMaxHR in
+                        maxHeartRate = String(newMaxHR)
                         saveProfile()
                     }
                 )
@@ -1033,6 +1072,36 @@ struct SettingsTabView: View {
             lthrProgress = ""
             lthrEstimate = estimate
             showingLTHRResult = true
+        }
+    }
+
+    private func runMaxHREstimation() async {
+        await MainActor.run {
+            isEstimatingMaxHR = true
+            maxHRProgress = "Starting..."
+        }
+
+        do {
+            try await healthKitService.requestAuthorization()
+        } catch {
+            await MainActor.run {
+                isEstimatingMaxHR = false
+                maxHRProgress = "HealthKit access denied"
+            }
+            return
+        }
+
+        let estimate = await healthKitService.estimateMaxHR(days: 730) { status in
+            Task { @MainActor in
+                maxHRProgress = status
+            }
+        }
+
+        await MainActor.run {
+            isEstimatingMaxHR = false
+            maxHRProgress = ""
+            maxHREstimate = estimate
+            showingMaxHRResult = true
         }
     }
 }

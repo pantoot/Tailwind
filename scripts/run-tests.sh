@@ -13,7 +13,8 @@ SOURCES=("Tailwind/Models/TrainingLoad.swift" "Tailwind/Utilities/Constants.swif
 for candidate in \
   "Tailwind/Services/TrainingDirectiveService.swift" \
   "Tailwind/Services/RideClassificationService.swift" \
-  "Tailwind/Services/RideListService.swift"
+  "Tailwind/Services/RideListService.swift" \
+  "Tailwind/Services/MaxHREstimationService.swift"
 do
   [ -f "$candidate" ] && SOURCES+=("$candidate")
 done
@@ -21,6 +22,7 @@ done
 xcrun swiftc -sdk "$SDK" -o "$BUILD_DIR/tests" \
   "${SOURCES[@]}" \
   scripts/TestShims.swift \
+  scripts/MaxHREstimationTests.swift \
   scripts/RideClassificationTests.swift \
   scripts/RideListTests.swift \
   scripts/TrainingDirectiveTests.swift

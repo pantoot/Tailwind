@@ -1281,6 +1281,177 @@ class HealthKitService: ObservableObject {
         )
     }
 
+    // MARK: - Max HR Estimation
+
+    struct MaxHREstimate {
+        let estimatedMaxHR: Int
+        let bestSustainedHR: Double
+        let rawMaxHR: Double
+        let workoutDate: Date
+        let workoutDuration: TimeInterval
+        let candidates: [MaxHRCandidate]  // Top efforts for context
+    }
+
+    struct MaxHRCandidate {
+        let date: Date
+        let sustainedHR: Double
+        let rawMaxHR: Double
+        let duration: TimeInterval
+        /// Raw max well above the sustained value means this workout's HR
+        /// stream contains spikes the filter rejected.
+        var isSpiky: Bool { rawMaxHR - sustainedHR > MaxHREstimationService.spikyDataGap }
+    }
+
+    /// Estimate max HR by finding the highest spike-filtered 15-second sustained
+    /// HR across cycling workouts. Two-phase: a cheap statistics query ranks
+    /// every workout by raw peak (raw ≥ sustained, so ranking by it can only
+    /// over-include, never miss a contender), then only the top workouts get a
+    /// full sample fetch and filtering. Returns nil if insufficient data.
+    func estimateMaxHR(days: Int = 730, progress: @escaping (String) -> Void) async -> MaxHREstimate? {
+        let endDate = Date()
+        guard let startDate = Calendar.current.date(byAdding: .day, value: -days, to: endDate) else { return nil }
+
+        progress("Fetching cycling workouts...")
+
+        let workouts: [HKWorkout]
+        do {
+            workouts = try await fetchCyclingWorkouts(from: startDate, to: endDate)
+        } catch {
+            print("❌ Max HR estimation: failed to fetch workouts: \(error)")
+            return nil
+        }
+
+        // Even short workouts can hold a max effort, but sub-10-minute entries
+        // are usually fragments. Deduplicate by start time — HealthKit returns
+        // the same ride from multiple sources.
+        let longEnough = workouts.filter { $0.duration >= 600 }
+        var seen = Set<Int>()
+        let eligible = longEnough.filter { workout in
+            let key = Int(workout.startDate.timeIntervalSinceReferenceDate / 60)
+            return seen.insert(key).inserted
+        }
+        guard !eligible.isEmpty else {
+            progress("No workouts found")
+            return nil
+        }
+
+        progress("Ranking \(eligible.count) workouts by peak HR...")
+
+        let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+
+        // Phase 1: cheap per-workout raw max via statistics query — no sample
+        // fetch, so scanning years of history stays fast and memory-safe.
+        var ranked: [(workout: HKWorkout, rawMax: Double)] = []
+        for workout in eligible {
+            let predicate = HKQuery.predicateForSamples(
+                withStart: workout.startDate,
+                end: workout.endDate,
+                options: .strictStartDate
+            )
+            let rawMax: Double
+            do {
+                rawMax = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKStatisticsQuery(
+                        quantityType: hrType,
+                        quantitySamplePredicate: predicate,
+                        options: .discreteMax
+                    ) { _, stats, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: stats?.maximumQuantity()?.doubleValue(for: bpmUnit) ?? 0)
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+            } catch {
+                print("⚠️ Max HR rank: stats query failed for workout \(workout.startDate): \(error.localizedDescription)")
+                continue
+            }
+            if rawMax > 0 {
+                ranked.append((workout, rawMax))
+            }
+        }
+
+        guard !ranked.isEmpty else {
+            progress("No HR data found")
+            return nil
+        }
+
+        // Phase 2: full sample fetch + spike filtering, but only for the top
+        // workouts by raw peak.
+        let deepScanLimit = 25
+        let deepScan = Array(ranked.sorted { $0.rawMax > $1.rawMax }.prefix(deepScanLimit))
+
+        var candidates: [MaxHRCandidate] = []
+        for (i, entry) in deepScan.enumerated() {
+            progress("Scanning workout \(i + 1) of \(deepScan.count)...")
+
+            let predicate = HKQuery.predicateForSamples(
+                withStart: entry.workout.startDate,
+                end: entry.workout.endDate,
+                options: .strictStartDate
+            )
+            let hrSamples: [HKQuantitySample]
+            do {
+                hrSamples = try await withCheckedThrowingContinuation { continuation in
+                    let query = HKSampleQuery(
+                        sampleType: hrType,
+                        predicate: predicate,
+                        limit: 10800,
+                        sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+                    ) { _, results, error in
+                        if let error = error {
+                            continuation.resume(throwing: error)
+                        } else {
+                            continuation.resume(returning: results as? [HKQuantitySample] ?? [])
+                        }
+                    }
+                    healthStore.execute(query)
+                }
+            } catch {
+                print("⚠️ Max HR scan: HR fetch failed for workout \(entry.workout.startDate): \(error.localizedDescription)")
+                continue
+            }
+
+            let samples = hrSamples.map {
+                MaxHREstimationService.HRSample(
+                    offset: $0.startDate.timeIntervalSince(entry.workout.startDate),
+                    bpm: $0.quantity.doubleValue(for: bpmUnit)
+                )
+            }
+            guard let result = MaxHREstimationService.bestSustained(samples: samples) else { continue }
+
+            candidates.append(MaxHRCandidate(
+                date: entry.workout.startDate,
+                sustainedHR: result.bestSustainedHR,
+                rawMaxHR: result.rawMaxHR,
+                duration: entry.workout.duration
+            ))
+
+            // Brief pause between workouts for memory
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        guard !candidates.isEmpty else {
+            progress("No usable HR data found")
+            return nil
+        }
+
+        let sorted = candidates.sorted { $0.sustainedHR > $1.sustainedHR }
+        let best = sorted[0]
+
+        return MaxHREstimate(
+            estimatedMaxHR: Int(best.sustainedHR.rounded()),
+            bestSustainedHR: best.sustainedHR,
+            rawMaxHR: best.rawMaxHR,
+            workoutDate: best.date,
+            workoutDuration: best.duration,
+            candidates: Array(sorted.prefix(5))
+        )
+    }
+
     /// Quick check: does HealthKit have any power data for this ride's time window?
     func hasPowerData(for ride: Ride) async -> Bool {
         let powerType = HKQuantityType.quantityType(forIdentifier: .cyclingPower)!
