@@ -268,6 +268,37 @@ struct RideDetailView: View {
         return .red
     }
 
+    /// Pw:HR decoupling — did heart rate drift against power between the
+    /// first and second half? Under 5% is the aerobic-endurance benchmark.
+    private func decouplingRow(_ decoupling: AerobicDecoupling) -> some View {
+        HStack(spacing: 6) {
+            Text(String(format: "Pw:HR Decoupling: %+.1f%%", decoupling.percent))
+            Text(decouplingLabel(decoupling.rating))
+                .fontWeight(.medium)
+                .foregroundStyle(decouplingColor(decoupling.rating))
+            Text(String(format: "(EF %.2f → %.2f)", decoupling.firstHalfEfficiency, decoupling.secondHalfEfficiency))
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+    }
+
+    private func decouplingLabel(_ rating: AerobicDecoupling.Rating) -> String {
+        switch rating {
+        case .coupled: return "coupled"
+        case .moderate: return "moderate drift"
+        case .high: return "high drift"
+        }
+    }
+
+    private func decouplingColor(_ rating: AerobicDecoupling.Rating) -> Color {
+        switch rating {
+        case .coupled: return .green
+        case .moderate: return .orange
+        case .high: return .red
+        }
+    }
+
     @ViewBuilder
     private func creatineMetricsSection(_ cm: CreatineMetrics) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -326,6 +357,10 @@ struct RideDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
+            }
+
+            if let decoupling = cm.aerobicDecoupling {
+                decouplingRow(decoupling)
             }
 
             // Effort blocks — the structured intervals of the ride

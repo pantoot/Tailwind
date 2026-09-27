@@ -10,6 +10,7 @@ nonisolated struct CreatineMetrics: Codable {
     // "Reanalyze Power Data" backfills them.
     let normalizedPower: Double?
     let effortBlocks: [EffortBlock]?
+    let aerobicDecoupling: AerobicDecoupling?
 }
 
 /// A sustained work interval (e.g. a Peloton Z3/Z4 block) detected from

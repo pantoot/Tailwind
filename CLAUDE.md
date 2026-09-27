@@ -66,6 +66,7 @@ FIT File (1Hz records) ──► CreatineAnalysisService.analyze()
                            detectMatches() — contiguous periods above threshold >5s
                            maxRollingAverage() — sliding 30s window maximum
                            detectHRRecovery() — HR spike + power drop + 60s measurement
+                           AerobicDecouplingService.decoupling() — Pw:HR drift, first vs second half
                                 │
                            ──► CreatineMetrics struct (stored on Ride model)
 ```
@@ -113,6 +114,8 @@ Tailwind/
 │   ├── RideClassificationService.swift # Intensity/structure axes + burst flag (pure, tested)
 │   ├── RideListService.swift          # Month grouping/expansion/duration (pure, tested)
 │   ├── MaxHREstimationService.swift   # Spike-filtered sustained max HR (pure, tested)
+│   ├── AerobicDecouplingService.swift # Friel Pw:HR decoupling, first vs second half EF (pure, tested)
+│   ├── PowerMath.swift                # Normalized power + shared power arithmetic (pure)
 │   ├── ImportStatusCenter.swift       # App-level import job status
 │   └── [legacy services...]           # Bluetooth, GPS, Audio, etc. (unused)
 ├── Views/
@@ -172,7 +175,7 @@ All injected as `@EnvironmentObject` into views.
 ## Development Guidelines
 
 ### Testing
-- No Xcode test target. Pure logic (TrainingDirectiveService, TrainingLoad bands/typical-load) is tested via `./scripts/run-tests.sh` — a standalone `swiftc` harness that compiles the model + service layer for macOS and runs assertions. Add new pure-logic tests to `scripts/TrainingDirectiveTests.swift`.
+- No Xcode test target. Pure logic (TrainingDirectiveService, TrainingLoad bands/typical-load, AerobicDecouplingService, MaxHREstimationService, RideClassificationService, RideListService) is tested via `./scripts/run-tests.sh` — a standalone `swiftc` harness that compiles the model + service layer for macOS and runs assertions. Add new pure-logic tests to `scripts/TrainingDirectiveTests.swift`.
 
 ### Xcode Project
 - Uses **PBXFileSystemSynchronizedRootGroup** — new Swift files are auto-detected by Xcode, no need to edit project.pbxproj

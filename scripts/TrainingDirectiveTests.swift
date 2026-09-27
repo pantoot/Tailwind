@@ -206,6 +206,7 @@ struct TestRunner {
         runMaxHREstimationTests(t)
         runRideClassificationTests(t)
         runRideListTests(t)
+        runAerobicDecouplingTests(t)
         t.finish()
     }
 }
