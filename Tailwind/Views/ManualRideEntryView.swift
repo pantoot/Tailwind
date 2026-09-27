@@ -7,7 +7,10 @@ struct ManualRideEntryView: View {
     @Environment(\.dismiss) private var dismiss
 
     // Ride data fields
-    @State private var rideDate = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+    // Today, not yesterday: the ride being recreated is almost always the one
+    // just finished, and a wrong day silently lands the Health workout and the
+    // TSS on the wrong date with no way to move them but delete-and-redo.
+    @State private var rideDate = Date()
     @State private var rideTime = Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: Date()) ?? Date()
     @State private var durationMinutes = ""
     @State private var calories = ""
