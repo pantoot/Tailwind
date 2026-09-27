@@ -201,6 +201,7 @@ All injected as `@EnvironmentObject` into views.
 - `RBSServiceErrorDomain Code=1 'Client not entitled'` — RunningBoard system noise
 - `UIViewAlertForUnsatisfiableConstraints` — iOS keyboard auto-layout internal conflict
 - `Cannot add handler to 0 from 0 - dropping` — Apple framework noise around system sheets / HealthKit calls on iOS 17–18
+- `Conversion error! {{0, 812}, {375, 302}} was converted to …` — iOS 18 UIKit keyboard-frame conversion when a form text field activates
 
 ### Git
 - **Current branch**: `fit-import-pivot`
