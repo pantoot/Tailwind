@@ -206,7 +206,7 @@ All injected as `@EnvironmentObject` into views.
 ### Git
 - **Current branch**: `fit-import-pivot`
 - **Main branch**: `main`
-- **Push auth issue**: `rick12341` doesn't have push access to `pantoot/Tailwind` — needs `gh auth login` or SSH remote URL fix
+- Push works over HTTPS as of Sep 27 2026 (`fit-import-pivot` tracks `origin/fit-import-pivot`)
 
 ## Testing Checklist
 
