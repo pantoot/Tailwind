@@ -200,6 +200,7 @@ All injected as `@EnvironmentObject` into views.
 - `Failed to create 1125x0 image slot` — iOS rendering engine, zero-height chart during layout
 - `RBSServiceErrorDomain Code=1 'Client not entitled'` — RunningBoard system noise
 - `UIViewAlertForUnsatisfiableConstraints` — iOS keyboard auto-layout internal conflict
+- `Cannot add handler to 0 from 0 - dropping` — Apple framework noise around system sheets / HealthKit calls on iOS 17–18
 
 ### Git
 - **Current branch**: `fit-import-pivot`
